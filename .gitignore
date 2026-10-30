@@ -58,9 +58,6 @@ server/server.properties
 PCL2/
 pcl-dl/node_modules/
 
-# ---- panel 是独立 git 仓库（mc-ai-control），不嵌套提交 ----
-panel/
-
 # ---- IDE / 系统文件 ----
 .idea/
 .vscode/
