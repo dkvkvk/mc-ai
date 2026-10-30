@@ -19,4 +19,4 @@ Minecraft AI 一体化仓库：把 mindcraft 机器人、1.20.1 服务端配置�
 
 ## 与旧仓库的关系
 
-`panel/` 原本是独立仓库 [dkvkvk/mc-ai-control](https://github.com/dkvkvk/mc-ai-control)。2026-10-30 以保留历史的方式并入本仓库（`git log -- panel/` 能看到它原来的 8 条提交），旧仓库已归档为只读。
+`panel/` 原本是独立仓库 [dkvkvk/mc-ai-control](https://github.com/dkvkvk/mc-ai-control)。2026-10-30 用 `git subtree` 以保留历史的方式并入本仓库：它原来的 8 条提交作为合并提交的第二父存在（`git log --graph` 可查，`git merge-base --is-ancestor fd5716e HEAD` 为真），旧仓库已归档为只读。
