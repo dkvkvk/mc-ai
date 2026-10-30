@@ -1,0 +1,68 @@
+# ---- 敏感文件：绝不入库 ----
+mindcraft/keys.json
+**/keys.json
+**/.env
+**/*.pem
+**/*.key
+**/credentials*.yaml
+**/credentials*.yml
+
+# ---- 依赖与构建产物 ----
+node_modules/
+**/node_modules/
+dist/
+**/dist/
+*.log
+logs/
+**/logs/
+
+# ---- mindcraft 运行数据 / 临时文件 ----
+mindcraft/code_records/
+mindcraft/scratch.js
+mindcraft/bots/**/action-code/
+mindcraft/services/viaproxy/jars/
+mindcraft/services/viaproxy/logs/
+mindcraft/services/viaproxy/plugins/
+mindcraft/services/viaproxy/ViaLoader/
+mindcraft/services/viaproxy/saves.json
+mindcraft/services/viaproxy/viaproxy.yml
+mindcraft/tmp/
+mindcraft/wandb/
+mindcraft/experiments/
+mindcraft/andy_*.json
+mindcraft/jill_*.json
+mindcraft/src/models/logs/
+mindcraft/server_data*/
+mindcraft/results/
+mindcraft/src/mindcraft-py/__pycache__/
+**/__pycache__/
+**/.DS_Store
+.vscode/
+.idea/
+
+# ---- server：MC 服务器运行产物（不推 jar/世界/日志） ----
+server/server.jar
+server/libraries/
+server/versions/
+server/world/
+server/logs/
+server/banned-ips.json
+server/banned-players.json
+server/ops.json
+server/whitelist.json
+server/usercache.json
+server/eula.txt
+server/server.properties
+
+# ---- PCL2 游戏启动器与游戏目录 ----
+PCL2/
+pcl-dl/node_modules/
+
+# ---- panel 是独立 git 仓库（mc-ai-control），不嵌套提交 ----
+panel/
+
+# ---- IDE / 系统文件 ----
+.idea/
+.vscode/
+Thumbs.db
+Desktop.ini

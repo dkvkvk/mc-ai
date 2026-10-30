@@ -1,0 +1,6 @@
+{
+    "name": "AIBot",
+    "model": "cline-pass/deepseek-v4.1-flash",
+    "api": "deepseek",
+    "url": "https://api.cline.bot/api/v1"
+}
