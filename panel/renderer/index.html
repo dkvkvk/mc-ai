@@ -165,10 +165,11 @@
                         </label>
                         <label>模型
                             <span class="model-row">
-                                <input class="input" id="nb-model" value="cline-pass/deepseek-v4.1-flash" />
+                                <input class="input" id="nb-model" list="nb-model-list" value="cline-pass/deepseek-v4.1-flash"
+                                       placeholder="直接输入，或点自动获取后从下拉里挑（可打字过滤）" />
                                 <button class="btn btn-sm" id="nb-fetch-models" title="用下面的接口地址和 API Key 拉模型列表">自动获取</button>
                             </span>
-                            <select class="input" id="nb-model-select" hidden></select>
+                            <datalist id="nb-model-list"></datalist>
                         </label>
                         <label>API 类型
                             <input class="input" id="nb-api" value="deepseek" placeholder="deepseek / openai / openrouter …" />

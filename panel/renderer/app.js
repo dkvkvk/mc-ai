@@ -449,23 +449,23 @@ $('nb-fetch-models').addEventListener('click', async () => {
     try {
         const r = await post('/api/models', { url, apiKey: key });
         if (!r.ok) { toast(r.msg || '获取失败', 'err'); return; }
-        const sel = $('nb-model-select');
-        sel.innerHTML = '';
-        for (const m of r.models) {
-            const o = document.createElement('option');
-            o.value = m; o.textContent = m;
-            if (m === $('nb-model').value.trim()) o.selected = true;
-            sel.appendChild(o);
-        }
-        sel.hidden = false;
-        sel.value = $('nb-model').value.trim() || r.models[0];
-        if (!r.models.includes($('nb-model').value.trim())) $('nb-model').value = sel.value;
-        toast('拿到 ' + r.models.length + ' 个模型，下拉里选一个', 'ok');
+        // 只往 datalist 里塞候选，不动输入框里已经填好的值（避免把 cline-pass/xxx 这种
+        // 网关特有的别名冲掉——接口的 /models 未必列得全）
+        const cur = $('nb-model').value.trim();
+        const list = $('nb-model-list');
+        list.innerHTML = '';
+        const seen = new Set();
+        const add = (m) => { if (!m || seen.has(m)) return; seen.add(m);
+            const o = document.createElement('option'); o.value = m; list.appendChild(o); };
+        if (cur) add(cur);
+        for (const m of r.models) add(m);
+        const missing = cur && !r.models.includes(cur);
+        toast('接口给了 ' + r.models.length + ' 个模型' + (missing ? '（不含当前的 ' + cur + '，已保留输入框的值）' : '') + '，输入框里打字可过滤', 'ok');
     } finally {
         btn.disabled = false; btn.textContent = '自动获取';
     }
 });
-$('nb-model-select').addEventListener('change', (e) => { $('nb-model').value = e.target.value; });
+
 
 // 添加机器人（添加后立刻启动它）
 $('nb-add').addEventListener('click', async () => {
@@ -483,7 +483,7 @@ $('nb-add').addEventListener('click', async () => {
     if (!r.ok) return;
     $('nb-name').value = '';
     $('nb-init').value = '';
-    $('nb-model-select').hidden = true;
+
     const s = await post('/api/bots/start', { name: body.name });
     if (s && s.msg) toast(s.msg, s.ok ? 'ok' : 'err');
     setTimeout(refresh, 800);
