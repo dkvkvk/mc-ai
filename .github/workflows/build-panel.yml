@@ -1,22 +1,19 @@
 name: build-panel
 
 # 面板（panel/）的构建全部在 GitHub 上跑：本地只提交源码，产物从 Actions 下载。
-# 触发：改到 panel/ 的 push、手动触发、打 v* 标签（顺便发 Release）。
-
 on:
   push:
     branches: [master]
     paths:
       - 'panel/**'
       - '.github/workflows/build-panel.yml'
-    tags: ['v*']
   pull_request:
     paths:
       - 'panel/**'
   workflow_dispatch:
 
 permissions:
-  contents: write        # 打标签时创建 Release 需要
+  contents: read
 
 jobs:
   build:
@@ -31,14 +28,15 @@ jobs:
 
       - name: Show toolchain
         run: |
-          Write-Host "csc:  $env:WINDIR\Microsoft.NET\Framework64\v4.0.30319\csc.exe"
-          & "$env:WINDIR\Microsoft.NET\Framework64\v4.0.30319\csc.exe" -version
-          node --version
-          Write-Host "runner: $env:RUNNER_OS / $env:ImageOS"
+          $csc = Join-Path $env:WINDIR 'Microsoft.NET\Framework64\v4.0.30319\csc.exe'
+          Write-Host "csc:  $csc"
+          & $csc -version
+          Write-Host "node: $(node --version)"
+          Write-Host "runner: $env:RUNNER_OS"
 
-      - name: Build app + installer
+      - name: Build app and installer
         run: |
-          # -BundleNode：产物自带 node.exe，目标机不用装 Node（CI 里显式打开）
+          # -BundleNode: the artifact carries node.exe, so the target machine needs no Node.js
           ./panel/build.ps1 -BundleNode
 
       - name: Verify artifacts
@@ -51,34 +49,37 @@ jobs:
             if ($i.Length -lt 200KB) { throw "$f is suspiciously small: $($i.Length) bytes" }
             Write-Host ("{0,-30} {1,10:N0} bytes" -f $i.Name, $i.Length)
           }
-          # 内嵌资源自检：主程序里必须有 WebView2 资源和 server.js
-          $bytes = [IO.File]::ReadAllBytes($exe)
-          $text = [Text.Encoding]::ASCII.GetString($bytes)
+          # The exe must really carry its embedded resources, otherwise it only fails at runtime.
+          $text = [Text.Encoding]::ASCII.GetString([IO.File]::ReadAllBytes($exe))
           foreach ($needle in @('wv2.core', 'wv2.winforms', 'wv2.loader', 'server.js', 'index.html')) {
-            if ($text -notmatch [regex]::Escape($needle)) { throw "resource '$needle' not embedded in exe" }
+            if ($text -notmatch [regex]::Escape($needle)) { throw "resource '$needle' is not embedded in the exe" }
           }
           Write-Host 'embedded resources OK'
+          if (Test-Path 'panel/dist/node.exe') { Write-Host 'node.exe bundled (portable build)' }
 
       - name: Package
         run: |
           New-Item -ItemType Directory -Force -Path out | Out-Null
           Copy-Item 'panel/dist/MC-AI-Control-Setup.exe' out/
-          # 便携版：exe + node.exe + 说明
+
           $portable = 'out/portable'
           New-Item -ItemType Directory -Force -Path $portable | Out-Null
           Copy-Item 'panel/dist/MC-AI-Control.exe' $portable/
           if (Test-Path 'panel/dist/node.exe') { Copy-Item 'panel/dist/node.exe' $portable/ }
-          Copy-Item 'panel/README.txt' "$portable/使用说明.txt"
-          @"
-MC-AI-Control 便携版
-====================
+          Copy-Item 'panel/README.txt' (Join-Path $portable '使用说明.txt')
 
-双击 MC-AI-Control.exe 即可运行，不需要安装。
+          $readme = @(
+            'MC-AI-Control 便携版',
+            '====================',
+            '',
+            '双击 MC-AI-Control.exe 即可运行，不需要安装。',
+            '',
+            '- 本目录自带的 node.exe 会被优先使用；删掉它则回退到系统 PATH 里的 Node.js',
+            '- 配置/日志在：本目录\MC-AI-Control-data（便携模式，跟着目录走）',
+            '- 想装进系统（开始菜单 + 卸载项）：运行 MC-AI-Control-Setup.exe'
+          )
+          $readme -join "`r`n" | Out-File -FilePath (Join-Path $portable '便携版说明.txt') -Encoding utf8
 
-- 本目录自带的 node.exe 会被优先使用；删掉它则回退到系统 PATH 里的 Node.js
-- 配置/日志在：本目录\MC-AI-Control-data（便携模式，跟着目录走）
-- 想装进系统（开始菜单 + 卸载项）：运行 MC-AI-Control-Setup.exe
-"@ | Out-File -FilePath "$portable/便携版说明.txt" -Encoding utf8
           Compress-Archive -Path "$portable/*" -DestinationPath 'out/MC-AI-Control-portable.zip' -Force
           Get-ChildItem out -Recurse -File | Select-Object Name, Length | Format-Table -AutoSize
 
@@ -95,14 +96,3 @@ MC-AI-Control 便携版
           name: MC-AI-Control-portable
           path: out/MC-AI-Control-portable.zip
           if-no-files-found: error
-
-      - name: Release (tag push only)
-        if: startsWith(github.ref, 'refs/tags/v')
-        uses: softprops/action-gh-release@v2
-        with:
-          name: ${{ github.ref_name }}
-          draft: false
-          generate_release_notes: true
-          files: |
-            out/MC-AI-Control-Setup.exe
-            out/MC-AI-Control-portable.zip
