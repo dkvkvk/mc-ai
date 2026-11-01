@@ -164,13 +164,20 @@
                             <input class="input" id="nb-name" placeholder="Bot1（3~16 位字母数字）" />
                         </label>
                         <label>模型
-                            <input class="input" id="nb-model" value="cline-pass/deepseek-v4.1-flash" />
+                            <span class="model-row">
+                                <input class="input" id="nb-model" value="cline-pass/deepseek-v4.1-flash" />
+                                <button class="btn btn-sm" id="nb-fetch-models" title="用下面的接口地址和 API Key 拉模型列表">自动获取</button>
+                            </span>
+                            <select class="input" id="nb-model-select" hidden></select>
                         </label>
                         <label>API 类型
-                            <input class="input" id="nb-api" value="deepseek" />
+                            <input class="input" id="nb-api" value="deepseek" placeholder="deepseek / openai / openrouter …" />
                         </label>
                         <label>接口地址
                             <input class="input" id="nb-url" value="https://api.cline.bot/api/v1" />
+                        </label>
+                        <label>API Key
+                            <input class="input" id="nb-key" type="password" placeholder="sk-…（留空就用 mindcraft/keys.json 里已有的）" />
                         </label>
                         <label>开场白（留空就不说话）
                             <input class="input" id="nb-init" placeholder="你好，我是 Bot1" />

@@ -448,3 +448,8 @@ select.input.select {
     color: #e8e8e8;
     padding: 0 8px;
 }
+
+/* 模型一行：输入框 + 自动获取按钮 */
+.model-row { display: flex; gap: 8px; align-items: center; }
+.model-row .input { flex: 1; }
+.model-row .btn { flex: none; white-space: nowrap; }

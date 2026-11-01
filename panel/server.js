@@ -225,6 +225,72 @@ let bots = loadBots();
 
 const BOT_NAME_RE = /^[A-Za-z0-9_]{3,16}$/;
 
+// mindcraft 从 <mindcraft>/keys.json 或环境变量里按「<API>_API_KEY」取密钥，
+// 个别家不按这个规律，单独列出来（见 mindcraft/src/models/*.js）
+const KEY_NAME = {
+    google: 'GEMINI_API_KEY',
+    gemini: 'GEMINI_API_KEY',
+    groq: 'GROQCLOUD_API_KEY',
+    'groq-cloud': 'GROQCLOUD_API_KEY',
+};
+function keyNameOf(api) {
+    const a = String(api || '').trim().toLowerCase();
+    if (KEY_NAME[a]) return KEY_NAME[a];
+    return a.toUpperCase().replace(/[^A-Z0-9]+/g, '_') + '_API_KEY';
+}
+
+// 把界面上填的 key 落到 mindcraft/keys.json（那才是真正被读的地方），返回是否写入
+function applyBotKey(bot) {
+    if (!bot || !bot.apiKey) return false;
+    if (!cfg.mindcraftDir) return false;
+    const file = path.join(cfg.mindcraftDir, 'keys.json');
+    let keys = {};
+    try { keys = JSON.parse(fs.readFileSync(file, 'utf8')) || {}; } catch { keys = {}; }
+    const name = keyNameOf(bot.api);
+    if (keys[name] === bot.apiKey) return false;
+    keys[name] = bot.apiKey;
+    try {
+        fs.writeFileSync(file, JSON.stringify(keys, null, 4), 'utf8');
+        pushLog('panel', '已把 ' + bot.name + ' 的 ' + name + ' 写进 mindcraft/keys.json');
+        return true;
+    } catch (e) {
+        pushLog('panel', '写 keys.json 失败：' + e.message);
+        return false;
+    }
+}
+
+// 拉取 OpenAI 兼容接口的模型列表（GET <url>/models）
+function fetchModels(url, apiKey) {
+    return new Promise((resolve) => {
+        let base;
+        try { base = new URL(String(url || '').trim()); } catch { return resolve({ ok: false, msg: '接口地址不是合法 URL' }); }
+        base.pathname = base.pathname.replace(/\/+$/, '') + '/models';
+        const mod = base.protocol === 'https:' ? require('https') : require('http');
+        const req = mod.request(base, {
+            method: 'GET',
+            headers: Object.assign({ Accept: 'application/json' }, apiKey ? { Authorization: 'Bearer ' + apiKey } : {}),
+            timeout: 15000,
+        }, (res) => {
+            let buf = '';
+            res.setEncoding('utf8');
+            res.on('data', (c) => { buf += c; });
+            res.on('end', () => {
+                if (res.statusCode < 200 || res.statusCode >= 300) {
+                    return resolve({ ok: false, msg: '接口返回 ' + res.statusCode + '：' + buf.slice(0, 200) });
+                }
+                let json;
+                try { json = JSON.parse(buf); } catch { return resolve({ ok: false, msg: '返回的不是 JSON' }); }
+                const list = (json.data || json.models || []).map((m) => (typeof m === 'string' ? m : (m.id || m.name || ''))).filter(Boolean);
+                if (!list.length) return resolve({ ok: false, msg: '接口没有返回模型列表' });
+                resolve({ ok: true, models: list.sort() });
+            });
+        });
+        req.on('timeout', () => { req.destroy(new Error('超时 15s')); });
+        req.on('error', (e) => resolve({ ok: false, msg: '请求失败：' + e.message }));
+        req.end();
+    });
+}
+
 // 机器人发言语言固定 en（见 botSettings 里的说明）；这里集中定义，界面和日志都以这个为准
 const BOT_LANGUAGE = 'en';
 
@@ -479,6 +545,8 @@ async function startBotOne(name) {
         return { ok: false, msg: '连不上 MindServer：' + (lastMindError || '原因未知') };
     }
 
+    if (bot.apiKey) applyBotKey(bot);
+
     const exist = agentsCache.find((a) => a.name === name);
     if (exist) {
         mSock.emit('start-agent', name);           // 已注册但进程被停过 → 重新拉起
@@ -664,6 +732,9 @@ async function getStatus() {
             api: b.api,
             url: b.url,
             language: BOT_LANGUAGE,
+            hasKey: !!b.apiKey,                    // 只告诉界面「填过没」，不回传明文
+            keyHint: b.apiKey ? '****' + b.apiKey.slice(-4) : '',
+            keyName: keyNameOf(b.api),
             initMessage: b.initMessage || '',
             enabled: b.enabled !== false,
             state: botStateOf(b.name),
@@ -766,10 +837,15 @@ const server = http.createServer(async (req, res) => {
                 initMessage: String(body.initMessage || '').trim(),
                 enabled: body.enabled !== false,
             };
+            // 空串表示「不动原来存的 key」，免得编辑别的字段时把 key 清掉
+            const key = String(body.apiKey ?? '').trim();
+            if (key) def.apiKey = key;
             const idx = bots.findIndex((b) => b.name === name);
             if (idx >= 0) bots[idx] = { ...bots[idx], ...def };
             else bots.push(def);
             saveBots(bots);
+            // 填了 key 就立刻落到 mindcraft/keys.json，不必等到点启动
+            applyBotKey(bots.find((b) => b.name === name));
             return json(res, 200, { ok: true, msg: (idx >= 0 ? '已更新 ' : '已添加 ') + name });
         }
 
@@ -789,6 +865,12 @@ const server = http.createServer(async (req, res) => {
             bot.enabled = !!body.enabled;
             saveBots(bots);
             return json(res, 200, { ok: true, msg: bot.name + (bot.enabled ? ' 已启用' : ' 已禁用') });
+        }
+
+        if (p === '/api/models' && req.method === 'POST') {
+            const body = await readBody(req);
+            const r = await fetchModels(body.url, String(body.apiKey || '').trim());
+            return json(res, 200, r);
         }
 
         if (p === '/api/bots/start' && req.method === 'POST') {

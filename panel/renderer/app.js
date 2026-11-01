@@ -72,8 +72,10 @@ function switchView(name) {
 }
 $('nav').addEventListener('click', (e) => {
     const btn = e.target.closest('.nav-item');
-    if (btn) switchView(btn.dataset.view);
+    if (btn) { switchView(btn.dataset.view); if (history.replaceState) history.replaceState(null, '', '#' + btn.dataset.view); }
 });
+// 支持 #bot / #server 这类深链，方便直接打开某一页
+if (location.hash.length > 1 && VIEW_TITLE[location.hash.slice(1)]) switchView(location.hash.slice(1));
 
 // ------------------------------------------------------------------ 日志渲染
 const pad2 = (n) => String(n).padStart(2, '0');
@@ -437,6 +439,34 @@ $('bt-say-btn').addEventListener('click', () => doSay('bt-say-input', 'bt-say-ta
 $('ov-say-input').addEventListener('keydown', (e) => { if (e.key === 'Enter') doSay('ov-say-input', 'ov-say-target'); });
 $('bt-say-input').addEventListener('keydown', (e) => { if (e.key === 'Enter') doSay('bt-say-input', 'bt-say-target'); });
 
+// 自动获取模型：拿「接口地址 + API Key」问 /models，列出来给人挑
+$('nb-fetch-models').addEventListener('click', async () => {
+    const url = $('nb-url').value.trim();
+    const key = $('nb-key').value.trim();
+    if (!url) { toast('先填接口地址', 'err'); return; }
+    const btn = $('nb-fetch-models');
+    btn.disabled = true; btn.textContent = '获取中…';
+    try {
+        const r = await post('/api/models', { url, apiKey: key });
+        if (!r.ok) { toast(r.msg || '获取失败', 'err'); return; }
+        const sel = $('nb-model-select');
+        sel.innerHTML = '';
+        for (const m of r.models) {
+            const o = document.createElement('option');
+            o.value = m; o.textContent = m;
+            if (m === $('nb-model').value.trim()) o.selected = true;
+            sel.appendChild(o);
+        }
+        sel.hidden = false;
+        sel.value = $('nb-model').value.trim() || r.models[0];
+        if (!r.models.includes($('nb-model').value.trim())) $('nb-model').value = sel.value;
+        toast('拿到 ' + r.models.length + ' 个模型，下拉里选一个', 'ok');
+    } finally {
+        btn.disabled = false; btn.textContent = '自动获取';
+    }
+});
+$('nb-model-select').addEventListener('change', (e) => { $('nb-model').value = e.target.value; });
+
 // 添加机器人（添加后立刻启动它）
 $('nb-add').addEventListener('click', async () => {
     const body = {
@@ -444,6 +474,7 @@ $('nb-add').addEventListener('click', async () => {
         model: $('nb-model').value.trim(),
         api: $('nb-api').value.trim(),
         url: $('nb-url').value.trim(),
+        apiKey: $('nb-key').value.trim(),
         initMessage: $('nb-init').value.trim(),
     };
     if (!body.name) { toast('先给机器人起个名字', 'err'); return; }
@@ -452,6 +483,7 @@ $('nb-add').addEventListener('click', async () => {
     if (!r.ok) return;
     $('nb-name').value = '';
     $('nb-init').value = '';
+    $('nb-model-select').hidden = true;
     const s = await post('/api/bots/start', { name: body.name });
     if (s && s.msg) toast(s.msg, s.ok ? 'ok' : 'err');
     setTimeout(refresh, 800);
