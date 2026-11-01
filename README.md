@@ -24,11 +24,13 @@ Minecraft AI 一体化仓库：把 mindcraft 机器人、1.20.1 服务端配置�
 
 2. **补密钥**：`mindcraft/keys.json` 不入库，按 `keys.example.json` 填自己的 key（当前用的是 `DEEPSEEK_API_KEY` 指向 Cline 网关）。
 3. **补服务端 jar**：`server/server.jar`（1.20.1）也不入库。走 BMCLAPI 镜像下，`piston-data.mojang.com` 直连会超时。`server.properties` 里 `online-mode=false` + `enforce-secure-profile=false` 都必需。
-4. **编译面板**：`powershell -ExecutionPolicy Bypass -File panel/build.ps1` → `panel/dist/MC-AI-Control.exe`，**单文件**（前端、后端、WebView2 的三个二进制全部内嵌），双击就是一个独立的桌面窗口（WinForms 窗体里嵌 WebView2），不是浏览器标签页，也没有地址栏。
-   - 首次编译会自动从 nuget 下 WebView2 SDK 到 `panel/.cache/`（已 gitignore）。
-   - 图标由 `panel/icon.ico` 提供，改了配色/像素图用 `panel/mkicon.cs` 重新生成。
-   - 运行时用系统的 Evergreen WebView2 Runtime（Win11 自带）；缺了会自动退回 Edge 应用窗口，并在日志里写明。
-   - `dist` 里另外会带一份 `node.exe`（便携用，可删）；系统装了 Node 时不需要它。
+4. **面板（安装包）**：**不本地编译**——改完代码推上来，[build-panel 工作流](.github/workflows/build-panel.yml) 会在 GitHub 的 Windows runner 上用 `csc` 编译，产物在 Actions 页面下载：
+
+   - `MC-AI-Control-Setup.exe` —— 带安装向导（欢迎 → 许可协议 → 安装位置 → 安装 → 完成），装完有开始菜单快捷方式、桌面快捷方式，并在「设置 → 应用」里有一条可卸载项。装到当前用户目录，**不需要管理员权限**。
+   - `MC-AI-Control-portable.zip` —— 解压即用，配置跟着目录走。
+
+   两个产物都自带 `node.exe`，目标机不需要另装 Node。打 `v*` 标签会同时发一个 Release。
+   非要本地编：`powershell -ExecutionPolicy Bypass -File panel/build.ps1 -BundleNode`（首次会从 nuget 拉 WebView2 SDK 到 `panel/.cache/`）。
 5. **路径**：面板首次启动会从 exe 所在目录逐级向上找 `server/`（含 `server.jar`）和 `mindcraft/`（含 `main.js`）并写进 `data/config.json`；找不到就去「设置」页手填。
 
 > 关面板不杀服务器和机器人（日志写文件、不走管道），下次打开会识别为「外部启动」。日志只跟新写入的行，不会回放上一局。

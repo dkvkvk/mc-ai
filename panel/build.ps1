@@ -1,9 +1,14 @@
 # Build the single-folder desktop app: embeds frontend + backend into a C# WinForms/WebView2 host.
-# Usage: powershell -ExecutionPolicy Bypass -File build.ps1
+# Usage: powershell -ExecutionPolicy Bypass -File build.ps1 [-BundleNode]
+#
+# -BundleNode : also copy node.exe into dist (portable build, target machine needs no Node).
+#               CI passes it; a plain local run does not, to keep dist small.
 #
 # Dependency (auto-downloaded once into .cache\, not committed):
 #   Microsoft.Web.WebView2 SDK - provides Core.dll / WinForms.dll and WebView2Loader.dll
 #   The runtime itself is NOT bundled: we use the system Evergreen WebView2 Runtime.
+param([switch]$BundleNode)
+
 $ErrorActionPreference = 'Stop'
 Set-Location $PSScriptRoot
 
@@ -56,6 +61,7 @@ $cscArgs = @(
     '/target:winexe',
     '/platform:anycpu',
     '/optimize+',
+    '/codepage:65001',
     '/win32icon:icon.ico',
     '/out:dist\MC-AI-Control.exe',
     '/r:System.Windows.Forms.dll',
@@ -82,16 +88,52 @@ if ($LASTEXITCODE -ne 0) { throw "compile failed, exit code $LASTEXITCODE" }
 # so nothing else has to sit next to MC-AI-Control.exe.
 Remove-Item 'dist\WebView2Loader.dll','dist\Microsoft.Web.WebView2.Core.dll','dist\Microsoft.Web.WebView2.WinForms.dll' -ErrorAction SilentlyContinue
 
-# Ship node.exe too, so the target machine does not need a separate Node install.
-$nodeSrc = (Get-Command node -ErrorAction SilentlyContinue).Source
-if ($nodeSrc -and (Test-Path $nodeSrc)) {
-    Copy-Item $nodeSrc 'dist\node.exe' -Force
-    Write-Host ('   bundled node.exe: ' + $nodeSrc)
+# Ship node.exe only when asked: it is 90+ MB and CI artifacts are meant to be self-sufficient.
+Remove-Item 'dist\node.exe' -ErrorAction SilentlyContinue
+if ($BundleNode) {
+    $nodeSrc = (Get-Command node -ErrorAction SilentlyContinue).Source
+    if ($nodeSrc -and (Test-Path $nodeSrc)) {
+        Copy-Item $nodeSrc 'dist\node.exe' -Force
+        Write-Host ('   bundled node.exe: ' + $nodeSrc)
+    } else {
+        Write-Host '   WARNING: -BundleNode given but node.exe not found; build is not portable'
+    }
 } else {
-    Write-Host '   WARNING: node.exe not found, dist will not be portable (install Node.js on the target)'
+    Write-Host '   (portable node.exe not bundled; pass -BundleNode to include it)'
 }
 
 $exe = Get-Item 'dist\MC-AI-Control.exe'
 Write-Host ("BUILD OK: {0}  ({1:N0} KB)" -f $exe.FullName, ($exe.Length / 1KB))
 Write-Host ("   SHA256: {0}" -f (Get-FileHash $exe.FullName -Algorithm SHA256).Hash)
 Write-Host '   dist: MC-AI-Control.exe (single file, + optional node.exe for portability)'
+
+# ---------------------------------------------------------------- installer
+# The setup wizard embeds the app exe, so it has to be built afterwards.
+if (Test-Path 'installer.cs') {
+    Remove-Item 'dist\MC-AI-Control-Setup.exe' -ErrorAction SilentlyContinue
+    $setupArgs = @(
+        '/nologo',
+        '/target:winexe',
+        '/platform:anycpu',
+        '/optimize+',
+        '/codepage:65001',
+        '/win32icon:icon.ico',
+        '/out:dist\MC-AI-Control-Setup.exe',
+        '/r:System.Windows.Forms.dll',
+        '/r:System.Drawing.dll',
+        '/resource:dist\MC-AI-Control.exe,MC-AI-Control.exe'
+    )
+    # Bundle node.exe into the installer when the portable build has it, so the
+    # installed app does not depend on a separate Node.js installation.
+    if (Test-Path 'dist\node.exe') {
+        $setupArgs += '/resource:dist\node.exe,node.exe'
+        Write-Host '   installer will also install node.exe'
+    }
+    $setupArgs += 'installer.cs'
+    $setupArgs += 'installer.asm.cs'
+    & $csc @setupArgs
+    if ($LASTEXITCODE -ne 0) { throw "installer compile failed, exit code $LASTEXITCODE" }
+    $setup = Get-Item 'dist\MC-AI-Control-Setup.exe'
+    Write-Host ("SETUP OK: {0}  ({1:N0} KB)" -f $setup.FullName, ($setup.Length / 1KB))
+    Write-Host ("   SHA256: {0}" -f (Get-FileHash $setup.FullName -Algorithm SHA256).Hash)
+}
