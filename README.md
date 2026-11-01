@@ -11,6 +11,24 @@ Minecraft AI 一体化仓库：把 mindcraft 机器人、1.20.1 服务端配置�
 | `pcl-dl/` | 下载、驱动 PCL2 启动器的辅助脚本（含截图与带界面测试） |
 | `panel/` | 控制面板：像素风侧边栏，管理服务端与 AI 机器人（WinForms 壳 + Node 后端 + 前端三件套）。构建看 `panel/build.ps1`，使用说明看 `panel/README.txt` |
 
+## 从 clone 到能玩
+
+1. **装依赖**（`node_modules/` 不入库，这步跳过机器人就起不来）：
+
+   ```bash
+   cd mindcraft
+   npm install
+   ```
+
+   `postinstall` 会跑 `patch-package`，自动打上 `patches/` 里 6 个补丁（mineflayer、pathfinder、protodef…）。`canvas` 已从依赖里摘掉，不需要 MSVC。
+
+2. **补密钥**：`mindcraft/keys.json` 不入库，按 `keys.example.json` 填自己的 key（当前用的是 `DEEPSEEK_API_KEY` 指向 Cline 网关）。
+3. **补服务端 jar**：`server/server.jar`（1.20.1）也不入库。走 BMCLAPI 镜像下，`piston-data.mojang.com` 直连会超时。`server.properties` 里 `online-mode=false` + `enforce-secure-profile=false` 都必需。
+4. **编译面板**：`powershell -ExecutionPolicy Bypass -File panel/build.ps1` → `panel/dist/MC-AI-Control.exe`，双击即可。
+5. **路径**：面板首次启动会从 exe 所在目录逐级向上找 `server/`（含 `server.jar`）和 `mindcraft/`（含 `main.js`）并写进 `data/config.json`；找不到就去「设置」页手填。
+
+> 关面板不杀服务器和机器人（日志写文件、不走管道），下次打开会识别为「外部启动」。日志只跟新写入的行，不会回放上一局。
+
 ## 不入库的东西
 
 `node_modules/`、`server/server.jar`、`server/libraries/`、`server/world/`、`PCL2/`、`mindcraft/keys.json`、`**/.env`、各处的 `dist/`。

@@ -21,9 +21,10 @@ const CONFIG_FILE = path.join(DATA_DIR, 'config.json');
 const BOTS_FILE = path.join(DATA_DIR, 'bots.json');
 
 const DEFAULTS = {
-    // 占位默认值：真实路径保存在 data/config.json（不随仓库发布）
-    serverDir: 'C:/mc-ai/server',
-    mindcraftDir: 'C:/mc-ai/mindcraft',
+    // 真实路径保存在 data/config.json（不随仓库发布）。
+    // 空串 = 还没定，启动时会从启动器给的线索往上搜「含 server/server.jar 与 mindcraft/main.js 的仓库根」自动补上。
+    serverDir: '',
+    mindcraftDir: '',
     javaPath: 'java',
     javaArgs: '-Xms1G -Xmx2G',
     serverPort: 25565,
@@ -31,6 +32,13 @@ const DEFAULTS = {
     mcVersion: '1.20.1',
     sayScript: 'say.mjs',
     nodePath: process.execPath,
+};
+
+// 允许从 /api/cfg 改的键（其余字段一律忽略，避免写坏配置）
+const CFG_SCHEMA = {
+    serverDir: 'path', mindcraftDir: 'path', javaPath: 'path', nodePath: 'path',
+    javaArgs: 'text', mcVersion: 'text', sayScript: 'text',
+    serverPort: 'port', mindserverPort: 'port',
 };
 
 fs.mkdirSync(DATA_DIR, { recursive: true });
@@ -41,8 +49,87 @@ function loadConfig() {
 }
 function saveConfig(cfg) { fs.writeFileSync(CONFIG_FILE, JSON.stringify(cfg, null, 2), 'utf8'); }
 
+// 只接受白名单里的键，并且按类型收口：写坏的值直接丢掉，而不是让面板带着脏配置跑
+function sanitizeConfigPatch(body) {
+    const out = {};
+    if (!body || typeof body !== 'object') return out;
+    for (const [key, kind] of Object.entries(CFG_SCHEMA)) {
+        if (!(key in body)) continue;
+        if (kind === 'port') {
+            const n = Number(body[key]);
+            if (Number.isInteger(n) && n > 0 && n < 65536) out[key] = n;
+        } else {
+            const s = String(body[key] == null ? '' : body[key]).trim();
+            if (s) out[key] = s;
+        }
+    }
+    return out;
+}
+
+// 可执行文件解析：带分隔符当路径用，裸名字（如 java）去 PATH / 常见位置找。
+// 之前 javaOk 直接 existsSync('java') 恒为 false，界面就永远显示「未找到 Java」。
+const EXE_GUESSES = [
+    'D:/Java/bin/java.exe', 'C:/Program Files/Java/jdk-17/bin/java.exe',
+    'C:/Program Files/Eclipse Adoptium/jdk-17/bin/java.exe',
+];
+
+function resolveExecutable(nameOrPath) {
+    if (!nameOrPath) return null;
+    const s = String(nameOrPath);
+    if (/[\\/]/.test(s)) return fs.existsSync(s) ? s : null;
+    const pathext = (process.env.PATHEXT || '.EXE;.CMD;.BAT').split(';').filter(Boolean);
+    for (const dir of String(process.env.PATH || '').split(path.delimiter)) {
+        if (!dir) continue;
+        for (const ext of pathext) {
+            try { const c = path.join(dir, s + ext); if (fs.existsSync(c)) return c; } catch { }
+        }
+    }
+    for (const g of EXE_GUESSES) if (path.basename(g).toLowerCase() === (s + '.exe').toLowerCase() && fs.existsSync(g)) return g;
+    return null;
+}
+
+// 首次运行 / 配置丢了：从 <exe 目录>（启动器通过 MCAI_ROOT_HINT 传来）、后端目录、cwd 逐级向上找仓库根
+function candidateRoots() {
+    const out = [];
+    for (const seed of [process.env.MCAI_ROOT_HINT, ROOT, process.cwd()]) {
+        if (!seed) continue;
+        let d;
+        try { d = path.resolve(seed); } catch { continue; }
+        for (let i = 0; i < 5; i++) {
+            if (!out.includes(d)) out.push(d);
+            const up = path.dirname(d);
+            if (up === d) break;
+            d = up;
+        }
+    }
+    return out;
+}
+
+function autodetectPaths(c) {
+    const serverOk = (dir) => !!dir && fs.existsSync(path.join(dir, 'server.jar'));
+    const mindOk = (dir) => !!dir && fs.existsSync(path.join(dir, 'main.js'));
+    let changed = false;
+    for (const root of candidateRoots()) {
+        if (!serverOk(c.serverDir)) {
+            const p = path.join(root, 'server');
+            if (serverOk(p)) { c.serverDir = p; changed = true; }
+        }
+        if (!mindOk(c.mindcraftDir)) {
+            const p = path.join(root, 'mindcraft');
+            if (mindOk(p)) { c.mindcraftDir = p; changed = true; }
+        }
+        if (serverOk(c.serverDir) && mindOk(c.mindcraftDir)) break;
+    }
+    return changed;
+}
+
 let cfg = loadConfig();
-if (!fs.existsSync(CONFIG_FILE)) saveConfig(cfg);
+const cfgExisted = fs.existsSync(CONFIG_FILE);
+if (autodetectPaths(cfg)) {
+    saveConfig(cfg);
+    console.log('[cfg] 自动识别到路径：' + cfg.serverDir + ' | ' + cfg.mindcraftDir);
+}
+if (!cfgExisted) saveConfig(cfg);
 
 // ------------------------------------------------------------------ 机器人定义
 // 每个机器人 = 一份 mindcraft profile（名字 / 模型 / 接口），持久化在 data/bots.json
@@ -52,7 +139,6 @@ function defaultBots() {
         model: 'cline-pass/deepseek-v4.1-flash',
         api: 'deepseek',
         url: 'https://api.cline.bot/api/v1',
-        language: 'zh',
         initMessage: '',
         enabled: true,
     };
@@ -67,7 +153,10 @@ function defaultBots() {
 function loadBots() {
     try {
         const list = JSON.parse(fs.readFileSync(BOTS_FILE, 'utf8'));
-        if (Array.isArray(list)) return list;
+        if (Array.isArray(list)) return list.map((b) => {
+            const { language, ...rest } = b;   // 旧版存过 language:'zh'（实际按 en 跑），清掉免得误导
+            return rest;
+        });
     } catch { /* 走默认 */ }
     const list = defaultBots();
     saveBots(list);
@@ -78,6 +167,9 @@ function saveBots(list) { fs.writeFileSync(BOTS_FILE, JSON.stringify(list, null,
 let bots = loadBots();
 
 const BOT_NAME_RE = /^[A-Za-z0-9_]{3,16}$/;
+
+// 机器人发言语言固定 en（见 botSettings 里的说明）；这里集中定义，界面和日志都以这个为准
+const BOT_LANGUAGE = 'en';
 
 function botSettings(bot) {
     return {
@@ -90,7 +182,7 @@ function botSettings(bot) {
         init_message: bot.initMessage || '',
         // 固定 en：非 en 会让 mindcraft 调 google-translate-api-x 把发言翻译一遍，
         // 国内基本连不上（报 "language zh unsupported / 网络失败"），而且机器人本来就跟着你的语言回答。
-        language: 'en',
+        language: BOT_LANGUAGE,
         load_memory: false,
     };
 }
@@ -129,14 +221,19 @@ function pushLog(src, line, when) {
 
 // ------------------------------------------------------------------ 解码
 // Windows 中文环境下 java 的 stdout 与 latest.log 常是 GBK（cp936），
-// 按 UTF-8 硬解会得到 "锛?/锟?" 这类乱码。先严格试 UTF-8，失败回退 GBK。
-const DECODERS = { utf8: () => new TextDecoder('utf-8'), gbk: () => new TextDecoder('gbk') };
+// 但有的构建/日志又是 UTF-8，而且服务器日志文件里 ASCII 与中文混排。
+// 关键：不能「读第一块决定整份文件的编码」——启动横幅全是 ASCII，会被判成 UTF-8，
+// 之后的中文聊天就全成了 "锟斤拷"。这里改成**逐行**按行字节判断，行边界天然不会切断多字节字符。
+const utf8Fatal = () => new TextDecoder('utf-8', { fatal: true });
+const gbkDecoder = () => new TextDecoder('gbk');
+const DECODERS = { utf8: () => new TextDecoder('utf-8'), gbk: gbkDecoder };
 
-function sniffEncoding(buf) {
-    try {
-        new TextDecoder('utf-8', { fatal: true }).decode(buf);
-        return 'utf8';
-    } catch { return 'gbk'; }
+function decodeLineBytes(buf) {
+    if (!buf || !buf.length) return '';
+    let ascii = true;
+    for (const b of buf) { if (b > 0x7f) { ascii = false; break; } }
+    if (ascii) return buf.toString('latin1');
+    try { return utf8Fatal().decode(buf); } catch { return gbkDecoder().decode(buf); }
 }
 
 function pipeLines(stream, src, enc, only) {
@@ -158,17 +255,42 @@ function pipeLines(stream, src, enc, only) {
     });
 }
 
-// 跟随一个正在增长的文件：带编码嗅探的流式解码，按需过滤
+// 跟随一个正在增长的文件：按行字节解码，按需过滤
 const followers = new Map();
 
 function followFile(key, filePath, src, keepRe) {
     const old = followers.get(key);
     if (old) clearInterval(old.timer);
-    const st = { offset: 0, decoder: null, rest: '' };
+    // 跟随一开始就存在的旧日志时，游标直接放到文件末尾：只跟「新写的行」，
+    // 否则面板一开就会把上一局整个 latest.log 回放一遍（旧的 "Done (" 会让人误判服务器已就绪）。
+    // 文件在跟随开始后才出现（新开服）则从头读，否则会漏掉启动日志。
+    let existed = false;
+    try { existed = fs.statSync(filePath).size > 0; } catch { }
+    const st = { offset: existed ? -1 : 0, rest: Buffer.alloc(0) };
+    const emitLine = (lineBuf) => {
+        const raw = decodeLineBytes(lineBuf).replace(/\r$/, '');
+        if (!raw) return;
+        if (keepRe && !keepRe.test(raw)) return;
+        let when;
+        const tm = raw.match(/^\[(\d{2}):(\d{2}):(\d{2})\]/);
+        if (tm) {
+            const d = new Date();
+            d.setHours(+tm[1], +tm[2], +tm[3], 0);
+            when = d.getTime();
+        }
+        const clean = raw
+            .replace(/^\[[^\]]*\]\s*(?:\[[^\]]*\]\s*)?:?\s*/, '')
+            .replace(/^\[Not Secure\]\s*/, '');
+        pushLog(src, clean, when);
+    };
     const timer = setInterval(() => {
         let stat;
         try { stat = fs.statSync(filePath); } catch { return; }
-        if (stat.size < st.offset) { st.offset = 0; st.decoder = null; st.rest = ''; }
+        if (st.offset < 0) {
+            st.offset = stat.size;   // 首次见到已存在的旧文件：直接定位到末尾，不重放
+            return;
+        }
+        if (stat.size < st.offset) { st.offset = 0; st.rest = Buffer.alloc(0); }   // 日志轮转/重建
         if (stat.size === st.offset) return;
         try {
             const fd = fs.openSync(filePath, 'r');
@@ -177,25 +299,15 @@ function followFile(key, filePath, src, keepRe) {
             const n = fs.readSync(fd, buf, 0, len, st.offset);
             fs.closeSync(fd);
             st.offset += n;
-            if (!st.decoder) st.decoder = DECODERS[sniffEncoding(buf.subarray(0, Math.min(n, 8192)))]();
-            st.rest += st.decoder.decode(buf.subarray(0, n), { stream: true });
-            const lines = st.rest.split('\n');
-            st.rest = lines.pop();
-            for (const raw of lines) {
-                if (!raw) continue;
-                if (keepRe && !keepRe.test(raw)) continue;
-                let when;
-                const tm = raw.match(/^\[(\d{2}):(\d{2}):(\d{2})\]/);
-                if (tm) {
-                    const d = new Date();
-                    d.setHours(+tm[1], +tm[2], +tm[3], 0);
-                    when = d.getTime();
-                }
-                const clean = raw
-                    .replace(/^\[[^\]]*\]\s*(?:\[[^\]]*\]\s*)?:?\s*/, '')
-                    .replace(/^\[Not Secure\]\s*/, '');
-                pushLog(src, clean, when);
+            let chunk = buf.subarray(0, n);
+            if (st.rest.length) chunk = Buffer.concat([st.rest, chunk]);
+            let nl;
+            while ((nl = chunk.indexOf(0x0a)) >= 0) {
+                emitLine(chunk.subarray(0, nl));
+                chunk = chunk.subarray(nl + 1);
             }
+            // 没有换行的残余：正常是半行，异常（日志卡死）时封顶避免无限增长
+            st.rest = chunk.length > 1024 * 1024 ? Buffer.alloc(0) : Buffer.from(chunk);
         } catch { /* 文件被占用，跳过 */ }
     }, 900);
     followers.set(key, { timer, st });
@@ -347,7 +459,7 @@ async function startBot() {
             cwd: cfg.mindcraftDir,
             windowsHide: true,
             stdio: ['ignore', mindLog, mindLog],
-            env: { ...process.env, SETTINGS_JSON: JSON.stringify({ profiles: [] }) },
+            env: { ...process.env, SETTINGS_JSON: JSON.stringify({ profiles: [], auto_open_ui: false }) },
         });
         fs.closeSync(mindLog);
         mindProc = p;
@@ -492,7 +604,7 @@ async function getStatus() {
             model: b.model,
             api: b.api,
             url: b.url,
-            language: b.language || 'zh',
+            language: BOT_LANGUAGE,
             initMessage: b.initMessage || '',
             enabled: b.enabled !== false,
             state: botStateOf(b.name),
@@ -504,7 +616,7 @@ async function getStatus() {
             mindcraftDir: cfg.mindcraftDir,
             serverDirOk: fs.existsSync(path.join(cfg.serverDir, 'server.jar')),
             mindcraftDirOk: fs.existsSync(path.join(cfg.mindcraftDir, 'main.js')),
-            javaOk: fs.existsSync(cfg.javaPath),
+            javaOk: !!resolveExecutable(cfg.javaPath),
         },
         configFile: CONFIG_FILE,
         botsFile: BOTS_FILE,
@@ -520,10 +632,19 @@ function json(res, code, body) {
 
 function readBody(req) {
     return new Promise((resolve) => {
-        let raw = '';
-        req.on('data', (c) => { raw += c; if (raw.length > 1e6) req.destroy(); });
+        // 先攒 Buffer 再整体按 UTF-8 解：逐块 toString() 会把跨块的多字节汉字劈坏（中文指令变 "???"）
+        const chunks = [];
+        let size = 0;
+        req.on('data', (c) => {
+            size += c.length;
+            if (size > 1e6) { req.destroy(); return; }
+            chunks.push(c);
+        });
         req.on('end', () => {
-            try { resolve(raw ? JSON.parse(raw) : {}); } catch { resolve({}); }
+            try {
+                const raw = chunks.length ? Buffer.concat(chunks).toString('utf8') : '';
+                resolve(raw ? JSON.parse(raw) : {});
+            } catch { resolve({}); }
         });
     });
 }
@@ -551,10 +672,16 @@ const server = http.createServer(async (req, res) => {
         if (p === '/api/cfg' && req.method === 'GET') return json(res, 200, cfg);
         if (p === '/api/cfg' && req.method === 'POST') {
             const body = await readBody(req);
-            cfg = { ...cfg, ...body };
+            const patch = sanitizeConfigPatch(body);
+            const ignored = Object.keys(body).filter((k) => !(k in CFG_SCHEMA));
+            cfg = { ...cfg, ...patch };
             saveConfig(cfg);
             startLogTail();
-            return json(res, 200, { ok: true, msg: '配置已保存：' + CONFIG_FILE });
+            return json(res, 200, {
+                ok: true,
+                msg: '配置已保存：' + CONFIG_FILE + (ignored.length ? '（已忽略未知字段：' + ignored.join('、') + '）' : ''),
+                changed: Object.keys(patch),
+            });
         }
         if (p === '/api/status') return json(res, 200, await getStatus());
 
@@ -577,7 +704,6 @@ const server = http.createServer(async (req, res) => {
                 model: String(body.model).trim(),
                 api: String(body.api || 'deepseek').trim(),
                 url: String(body.url).trim(),
-                language: String(body.language || 'zh').trim(),
                 initMessage: String(body.initMessage || '').trim(),
                 enabled: body.enabled !== false,
             };

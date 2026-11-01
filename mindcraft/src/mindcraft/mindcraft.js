@@ -21,7 +21,14 @@ export async function init(host_public=false, port=8080, auto_open_ui=true) {
         setTimeout(() => {
             // check if browser listener is already open
             if (numStateListeners() === 0) {
-                open('http://localhost:'+port);
+                // 打不开浏览器不该把 MindServer 一起带走（沙箱 / 无默认浏览器时 open() 会同步抛 EPERM）
+                try {
+                    Promise.resolve(open('http://localhost:' + port)).catch((e) => {
+                        console.error('自动打开 MindServer 页面失败：', e.message);
+                    });
+                } catch (e) {
+                    console.error('自动打开 MindServer 页面失败：', e.message);
+                }
             }
         }, 3000);
     }

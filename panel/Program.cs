@@ -177,6 +177,8 @@ static class Program
             RedirectStandardOutput = true,
             RedirectStandardError = true,
         };
+        // 把 exe 所在目录告诉后端：配置丢了/换机器时它能从这里往上找到 server/ 与 mindcraft/
+        psi.EnvironmentVariables["MCAI_ROOT_HINT"] = AppDomain.CurrentDomain.BaseDirectory.TrimEnd('\\');
         var p = Process.Start(psi);
         // 异步把输出丢掉，避免管道写满把后端卡死
         p.OutputDataReceived += (s, e) => { };
