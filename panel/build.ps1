@@ -110,6 +110,16 @@ Write-Host '   dist: MC-AI-Control.exe (single file, + optional node.exe for por
 # ---------------------------------------------------------------- installer
 # The setup wizard embeds the app exe, so it has to be built afterwards.
 if (Test-Path 'installer.cs') {
+    # Tiny uninstaller first: installing a copy of the 88 MB setup as uninstall.exe
+    # would double the install size for no reason.
+    if (Test-Path 'uninstaller.cs') {
+        & $csc /nologo /target:winexe /platform:anycpu /optimize+ /codepage:65001 `
+            /win32icon:icon.ico /out:dist\uninstall.exe uninstaller.cs uninstaller.asm.cs
+        if ($LASTEXITCODE -ne 0) { throw "uninstaller compile failed, exit code $LASTEXITCODE" }
+        $u = Get-Item 'dist\uninstall.exe'
+        Write-Host ("   uninstaller: {0:N0} KB" -f ($u.Length / 1KB))
+    }
+
     Remove-Item 'dist\MC-AI-Control-Setup.exe' -ErrorAction SilentlyContinue
     $setupArgs = @(
         '/nologo',
@@ -128,6 +138,9 @@ if (Test-Path 'installer.cs') {
     if (Test-Path 'dist\node.exe') {
         $setupArgs += '/resource:dist\node.exe,node.exe'
         Write-Host '   installer will also install node.exe'
+    }
+    if (Test-Path 'dist\uninstall.exe') {
+        $setupArgs += '/resource:dist\uninstall.exe,uninstall.exe'
     }
     $setupArgs += 'installer.cs'
     $setupArgs += 'installer.asm.cs'

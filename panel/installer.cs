@@ -159,10 +159,19 @@ static class SetupProgram
 
             // 卸载程序 = 自己的一份拷贝
             Trace("stage3 ok");
+            // 卸载程序：构建时内嵌的小 exe（十几 KB）。旧做法是把安装包自己复制一份，
+            // 但安装包里有 node.exe，复制一份会让安装目录白白多占 80 多 MB。
             stage = "写入卸载程序";
             string uninstallPath = Path.Combine(dir, "uninstall.exe");
-            if (!string.Equals(Application.ExecutablePath, uninstallPath, StringComparison.OrdinalIgnoreCase))
+            if (HasEmbeddedResource("uninstall.exe"))
+            {
+                if (!string.Equals(Application.ExecutablePath, uninstallPath, StringComparison.OrdinalIgnoreCase))
+                    ExtractResource("uninstall.exe", uninstallPath);
+            }
+            else if (!string.Equals(Application.ExecutablePath, uninstallPath, StringComparison.OrdinalIgnoreCase))
+            {
                 File.Copy(Application.ExecutablePath, uninstallPath, true);
+            }
 
             Trace("stage4 ok");
             // 快捷方式和注册表属于「锦上添花」：失败不该让整个安装失败，
