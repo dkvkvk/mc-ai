@@ -88,28 +88,85 @@ function resolveExecutable(nameOrPath) {
     return null;
 }
 
-// 首次运行 / 配置丢了：从 <exe 目录>（启动器通过 MCAI_ROOT_HINT 传来）、后端目录、cwd 逐级向上找仓库根
+// 首次运行 / 配置丢了：先找仓库根（同时含 server/server.jar 与 mindcraft/main.js 的目录）。
+// 三级策略，越往后越贵，只有前面没找到才走：
+//   1. <exe 目录>（启动器通过 MCAI_ROOT_HINT 传来）、后端目录、cwd 逐级向上 —— 便携/开发场景秒中
+//   2. 用户手工写的 roots.txt（每行一个路径），放在数据目录或 exe 旁边
+//   3. 常见盘符与桌面下扫两层 —— 装到别处（比如 D:\MC-AI-Control）时靠这层兜住
+const ROOT_MARKERS = ['server', 'mindcraft'];
+let scanCache = null;
+
+function readRootHints() {
+    const out = [];
+    for (const f of [path.join(DATA_DIR, 'roots.txt'), path.join(process.env.MCAI_ROOT_HINT || '', 'roots.txt')]) {
+        try {
+            if (!f || !fs.existsSync(f)) continue;
+            for (const line of fs.readFileSync(f, 'utf8').split(/\r?\n/)) {
+                const t = line.trim();
+                if (t && !t.startsWith('#')) out.push(t);
+            }
+        } catch { /* 读不了就当没有 */ }
+    }
+    return out;
+}
+
 function candidateRoots() {
     const out = [];
+    const push = (d) => { if (d && !out.includes(d)) out.push(d); };
     for (const seed of [process.env.MCAI_ROOT_HINT, ROOT, process.cwd()]) {
         if (!seed) continue;
         let d;
         try { d = path.resolve(seed); } catch { continue; }
         for (let i = 0; i < 5; i++) {
-            if (!out.includes(d)) out.push(d);
+            push(d);
             const up = path.dirname(d);
             if (up === d) break;
             d = up;
         }
     }
+    for (const h of readRootHints()) {
+        let d;
+        try { d = path.resolve(h); } catch { continue; }
+        push(d);
+        for (const marker of ROOT_MARKERS) push(path.join(d, marker));
+    }
     return out;
+}
+
+// 扫两层：D:\ / C:\ 的下一级与下两级目录，加上桌面的下一级。
+// 只 stat 目录名，不做递归查找，几百次调用，缺失配置时只在启动跑一次。
+function scanRoots() {
+    if (scanCache) return scanCache;
+    const bases = [];
+    const home = process.env.USERPROFILE || '';
+    bases.push('C:\\', 'D:\\');
+    if (home) bases.push(path.join(home, 'Desktop'));
+    const found = [];
+    let budget = 900;
+    for (const base of bases) {
+        let kids = [];
+        try { kids = fs.readdirSync(base, { withFileTypes: true }); } catch { continue; }
+        for (const k of kids) {
+            if (!k.isDirectory() || budget-- <= 0) continue;
+            const p1 = path.join(base, k.name);
+            found.push(p1);
+            let grand = [];
+            try { grand = fs.readdirSync(p1, { withFileTypes: true }); } catch { continue; }
+            for (const g of grand) {
+                if (!g.isDirectory() || budget-- <= 0) continue;
+                found.push(path.join(p1, g.name));
+            }
+        }
+    }
+    scanCache = found;
+    return found;
 }
 
 function autodetectPaths(c) {
     const serverOk = (dir) => !!dir && fs.existsSync(path.join(dir, 'server.jar'));
     const mindOk = (dir) => !!dir && fs.existsSync(path.join(dir, 'main.js'));
     let changed = false;
-    for (const root of candidateRoots()) {
+    for (const root of candidateRoots().concat(scanRoots())) {
         if (!serverOk(c.serverDir)) {
             const p = path.join(root, 'server');
             if (serverOk(p)) { c.serverDir = p; changed = true; }
@@ -451,6 +508,7 @@ async function startBot() {
     // 1) 确保 MindServer 在跑（只跑服务，不自动创建任何机器人）
     if (!(await portOpen(cfg.mindserverPort))) {
         const main = path.join(cfg.mindcraftDir, 'main.js');
+        if (!cfg.mindcraftDir) return { ok: false, msg: '还没设置 mindcraft 目录：去「设置」页选到 mindcraft 文件夹（或把控制面板放进项目根目录，它会自己找）' };
         if (!fs.existsSync(main)) return { ok: false, msg: '找不到 main.js：' + main };
         pushLog('panel', '启动 MindServer（不自动建 bot）…');
         // 输出写文件而不是管道：这样面板关掉、管道断开也不会把 MindServer 带走
@@ -537,6 +595,7 @@ async function startServer() {
         return { ok: true, msg: '检测到端口已在监听（外部启动的服务器），已接管日志监听。' };
     }
     const jar = path.join(cfg.serverDir, 'server.jar');
+    if (!cfg.serverDir) return { ok: false, msg: '还没设置服务端目录：去「设置」页选到 server 文件夹（或把控制面板放进项目根目录，它会自己找）' };
     if (!fs.existsSync(jar)) return { ok: false, msg: '找不到服务端：' + jar };
     const args = [...String(cfg.javaArgs).split(/\s+/).filter(Boolean), '-jar', 'server.jar', 'nogui'];
     pushLog('panel', '启动服务器：' + cfg.javaPath + ' ' + args.join(' '));
