@@ -40,7 +40,6 @@ Minecraft AI 一体化仓库：把 mindcraft 机器人、1.20.1 服务端配置�
 - 真相先看日志：`launcher.log` 在数据目录里，写不进去会依次落到 exe 同目录、`%TEMP%`。
 - 数据目录按 `%LOCALAPPDATA%\MC-AI-Control` → `exe 同目录\MC-AI-Control-data` → `%TEMP%\MC-AI-Control` 顺序挑第一个**能写**的。前一个被安全软件锁成只读时会自动落到下一个，不会静默失败。
 - `MC-AI-Control.exe --doctor` 生成 `doctor.txt`（node / WebView2 / Edge / 端口 / 目录可写性 / 已安装文件时间戳）并用记事本打开。
-- 完全绕过 exe：双击 `panel/启动面板.bat`，它直接跑 `node server.js` 再开 Edge 应用窗口。
 
 ## 不入库的东西
 

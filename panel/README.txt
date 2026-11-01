@@ -73,7 +73,6 @@ B. 便携版
 2. 命令行运行 `MC-AI-Control.exe --doctor`，会生成 doctor.txt 并打开，
    里面写着 node / WebView2 / Edge / 端口 / 三处目录可写性 / 已装文件时间戳
 3. 看 launcher.log 最后几行，出错原因都写在那
-4. 还不行就双击同目录的 启动面板.bat，它绕过 exe 直接跑 node server.js
 
 几个说明
 --------
