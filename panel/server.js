@@ -270,6 +270,54 @@ function botKeyState(bot) {
     return { ok: false, name, from: '' };
 }
 
+// 只发一条 1 token 的请求，看这个模型到底能不能用（网关会把没权限的模型也列出来）
+function probeModel(url, apiKey, model) {
+    return new Promise((resolve) => {
+        let base;
+        try { base = new URL(String(url || '').trim()); } catch { return resolve({ model, ok: false, msg: '接口地址不合法' }); }
+        base.pathname = base.pathname.replace(/\/+$/, '') + '/chat/completions';
+        const body = JSON.stringify({ model, messages: [{ role: 'user', content: 'hi' }], max_tokens: 1, stream: false });
+        const mod = base.protocol === 'https:' ? require('https') : require('http');
+        const req = mod.request(base, {
+            method: 'POST',
+            headers: Object.assign({
+                'Content-Type': 'application/json',
+                'Content-Length': Buffer.byteLength(body),
+            }, apiKey ? { Authorization: 'Bearer ' + apiKey } : {}),
+            timeout: 20000,
+        }, (res) => {
+            let buf = '';
+            res.setEncoding('utf8');
+            res.on('data', (c) => { buf += c; });
+            res.on('end', () => {
+                const ok = res.statusCode >= 200 && res.statusCode < 300;
+                let msg = '';
+                if (!ok) { try { const j = JSON.parse(buf); msg = (j.error && (j.error.message || j.error.code)) || ''; } catch { msg = buf.slice(0, 120); } }
+                resolve({ model, ok, code: res.statusCode, msg });
+            });
+        });
+        req.on('timeout', () => { req.destroy(new Error('超时 20s')); });
+        req.on('error', (e) => resolve({ model, ok: false, msg: e.message }));
+        req.write(body);
+        req.end();
+    });
+}
+
+// 并发探一遍（限 4 个并发，别把网关打挂）
+async function probeModels(url, apiKey, models) {
+    const list = [...new Set(models)].slice(0, 60);   // 一次最多 60 个，防手滑把整库都探了
+    const results = [];
+    let i = 0;
+    const workers = new Array(Math.min(4, list.length)).fill(0).map(async () => {
+        while (i < list.length) {
+            const m = list[i++];
+            results.push(await probeModel(url, apiKey, m));
+        }
+    });
+    await Promise.all(workers);
+    return results;
+}
+
 // 拉取 OpenAI 兼容接口的模型列表（GET <url>/models）
 function fetchModels(url, apiKey) {
     return new Promise((resolve) => {
@@ -916,6 +964,16 @@ const server = http.createServer(async (req, res) => {
             bot.enabled = !!body.enabled;
             saveBots(bots);
             return json(res, 200, { ok: true, msg: bot.name + (bot.enabled ? ' 已启用' : ' 已禁用') });
+        }
+
+        if (p === '/api/models/probe' && req.method === 'POST') {
+            const body = await readBody(req);
+            const list = Array.isArray(body.models) ? body.models : [];
+            if (!list.length) return json(res, 200, { ok: false, msg: '没有要探测的模型' });
+            const results = await probeModels(body.url, String(body.apiKey || '').trim(), list);
+            const usable = results.filter((r) => r.ok).map((r) => r.model);
+            pushLog('panel', '模型可用性探测：' + usable.length + '/' + results.length + ' 可用');
+            return json(res, 200, { ok: true, usable, results });
         }
 
         if (p === '/api/models' && req.method === 'POST') {

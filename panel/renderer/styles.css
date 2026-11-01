@@ -453,3 +453,6 @@ select.input.select {
 .model-row { display: flex; gap: 8px; align-items: center; }
 .model-row .input { flex: 1; }
 .model-row .btn { flex: none; white-space: nowrap; }
+
+/* 模型行里三个控件挤在一起时，按钮不换行 */
+.model-row { flex-wrap: wrap; }
