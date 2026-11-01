@@ -8,7 +8,6 @@ Minecraft AI 一体化仓库：把 mindcraft 机器人、1.20.1 服务端配置�
 |---|---|
 | `mindcraft/` | AI 机器人（mindcraft 源码与配置模板）。运行数据、日志、缓存、`keys.json` 都不入库 |
 | `server/` | Minecraft **1.20.1** 服务端目录：只提交配置模板，`server.jar`、`libraries/`、`world/`、日志都在 .gitignore 里 |
-| `pcl-dl/` | 下载、驱动 PCL2 启动器的辅助脚本（含截图与带界面测试） |
 | `panel/` | 控制面板：像素风侧边栏，管理服务端与 AI 机器人（**WinForms + WebView2 桌面程序** + Node 后端 + 前端三件套）。构建看 `panel/build.ps1`，使用说明看 `panel/README.txt` |
 
 ## 从 clone 到能玩
