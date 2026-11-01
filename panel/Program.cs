@@ -1,11 +1,19 @@
 // ---------------------------------------------------------------------------
-//  Minecraft AI 控制面板 —— 单文件启动器
-//  作用：解压内嵌的前端/后端 → 拉起 node 后端 → 用 Edge 应用窗口打开面板
-//  设计取舍：本机 Electron 启动即崩（Chromium 初始化访问违例），而 Chromium
-//            窗口本身正常，所以用系统自带的 Edge（--app 模式）当壳，稳定性最好。
+//  Minecraft AI 控制面板 —— 桌面启动器（WinForms + WebView2）
+//
+//  历史：最早用 Electron 套壳，但这台机器上 electron.exe 一启动就 STATUS_BREAKPOINT，
+//        而 Chromium 本身正常 —— 所以改成「系统浏览器当壳」的临时方案（Edge --app）。
+//        但那样终究是个浏览器窗口：任务栏是 Edge 的图标、能拖出新标签、关不干净。
+//
+//  现在：自己开一个 WinForms 窗体，里面嵌 WebView2（Edge 内核，机器上已装运行时）。
+//        窗口是本进程的、图标/标题/任务栏都是这个程序，没有地址栏、没有标签页。
+//        运行时若 WebView2 不可用（缺运行时/DLL 加载失败），自动回退到 Edge 窗口，
+//        并且一定在日志里写明原因。
 // ---------------------------------------------------------------------------
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
+using System.Drawing;
 using System.IO;
 using System.Net;
 using System.Net.Sockets;
@@ -13,6 +21,8 @@ using System.Reflection;
 using System.Text;
 using System.Threading;
 using System.Windows.Forms;
+using Microsoft.Web.WebView2.Core;
+using Microsoft.Web.WebView2.WinForms;
 
 static class Program
 {
@@ -62,8 +72,7 @@ static class Program
     static readonly string LogFileTmp = Path.Combine(Path.GetTempPath(), "MC-AI-Control-launcher.log");
     static string ActiveLog;
 
-    static void Log(string msg)
-    {
+    static void Log(string msg)    {
         string line = DateTime.Now.ToString("HH:mm:ss.fff") + "  " + msg + Environment.NewLine;
         string[] candidates = { ActiveLog, LogFileData, LogFileExe, LogFileTmp };
         foreach (string f in candidates)
@@ -79,10 +88,21 @@ static class Program
         }
     }
 
-    // 出错时把「到底哪个环节挂了」摆到用户面前，而不是静默退出
+    // 本次自己拉起的后端（窗口没开成时不能留一个看不见的进程占着端口）
+    static Process StartedBackend;
+
     static void Fatal(string title, string detail)
     {
         Log("错误: " + detail.Replace(Environment.NewLine, " | "));
+        try
+        {
+            if (StartedBackend != null && !StartedBackend.HasExited)
+            {
+                StartedBackend.Kill();
+                Log("启动失败，已回收后端进程");
+            }
+        }
+        catch { }
         string where = ActiveLog ?? "(日志不可写)";
         MessageBox.Show(detail + "\n\n日志: " + where + "\n数据目录: " + DataDir,
             title, MessageBoxButtons.OK, MessageBoxIcon.Error);
@@ -118,7 +138,7 @@ static class Program
             }
             Log("目录已就绪: " + AppDir);
 
-            var failed = ExtractAssets();
+            List<string> failed = ExtractAssets();
             Log("资源释放完成" + (failed.Count > 0 ? "（失败 " + failed.Count + " 项）" : ""));
             if (failed.Count > 0)
             {
@@ -133,7 +153,7 @@ static class Program
 
             // 1) 已有后端在跑就直接复用，避免开出两个
             int port = FindRunningBackend();
-            bool started = false;
+            Process backend = null;
             Log("已有后端端口: " + port);
 
             if (port == 0)
@@ -147,9 +167,8 @@ static class Program
                         "或把 node.exe 的完整路径写进：\n" + Path.Combine(DataDir, "node.txt"));
                     return;
                 }
-                StartBackend(node);
+                backend = StartBackend(node);
                 port = WaitForBackend(25);
-                started = true;
                 Log("后端端口: " + port);
                 if (port == 0)
                 {
@@ -159,13 +178,131 @@ static class Program
                 }
             }
 
-            OpenPanelWindow(port);
-            Log("窗口已拉起，启动器退出");
-            GC.KeepAlive(started);
+            Application.EnableVisualStyles();
+            Application.SetCompatibleTextRenderingDefault(false);
+            Application.Run(new AppWindow(port, backend));
         }
         catch (Exception ex)
         {
             Fatal("Minecraft AI 控制面板", "启动出错：" + ex.Message + "\n\n" + ex.GetType().Name);
+        }
+    }
+
+    // ---------------------------------------------------------------- 主窗口
+    // 一个真正的应用窗口：本进程所有，图标/标题/任务栏都是自己，没有地址栏和标签页。
+    sealed class AppWindow : Form
+    {
+        readonly int port;
+        readonly Process backend;
+        WebView2 web;
+        bool webReady;
+
+        public AppWindow(int port, Process backend)
+        {
+            this.port = port;
+            this.backend = backend;
+
+            Text = "Minecraft AI 控制面板";
+            BackColor = Color.FromArgb(0x12, 0x12, 0x12);
+            StartPosition = FormStartPosition.CenterScreen;
+            MinimumSize = new Size(980, 660);
+            Font = new Font("Microsoft YaHei UI", 9f);
+            try { Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath); } catch { }
+
+            RestoreBoundsFromDisk();
+
+            web = new WebView2 { Dock = DockStyle.Fill };
+            try
+            {
+                string wvData = Path.Combine(DataDir, "webview");
+                Directory.CreateDirectory(wvData);
+                web.CreationProperties = new CoreWebView2CreationProperties { UserDataFolder = wvData };
+            }
+            catch (Exception ex) { Log("WebView2 用户数据目录准备失败: " + ex.Message); }
+            Controls.Add(web);
+
+            Shown += OnShown;
+            FormClosing += OnClosing;
+        }
+
+        async void OnShown(object sender, EventArgs e)
+        {
+            string url = "http://127.0.0.1:" + port + "/";
+            try
+            {
+                await web.EnsureCoreWebView2Async(null);
+                CoreWebView2 core = web.CoreWebView2;
+                core.Settings.AreDevToolsEnabled = false;
+                core.Settings.IsStatusBarEnabled = false;
+                core.Settings.AreDefaultContextMenusEnabled = false;
+                core.Settings.IsZoomControlEnabled = false;
+                core.Settings.AreBrowserAcceleratorKeysEnabled = false;   // 屏蔽 Ctrl+P / Ctrl+F 这类浏览器快捷键
+                core.NewWindowRequested += (s2, ev) =>
+                {
+                    // 面板里的外链交给系统浏览器，别在应用窗口里长出第二个窗口
+                    ev.Handled = true;
+                    try { Process.Start(ev.Uri); } catch { }
+                };
+                web.Source = new Uri(url);
+                webReady = true;
+                Log("窗口已就绪（WebView2）: " + url);
+            }
+            catch (Exception ex)
+            {
+                // WebView2 运行时缺失 / loader 加载失败：退回 Edge 应用窗口，至少能用
+                Log("WebView2 初始化失败，回退 Edge 窗口: " + ex.Message);
+                OpenPanelWindow(port);
+                Close();
+            }
+        }
+
+        void OnClosing(object sender, FormClosingEventArgs e)
+        {
+            SaveBoundsToDisk();
+            try
+            {
+                if (backend != null && !backend.HasExited)
+                {
+                    backend.Kill();          // 自己起的后端跟着窗口一起退
+                    Log("窗口关闭，已结束后端进程");
+                }
+                else Log("窗口关闭");
+            }
+            catch (Exception ex) { Log("结束后端失败: " + ex.Message); }
+            if (!webReady) Log("（本次是 Edge 回退模式）");
+        }
+
+        // 记住窗口大小/位置，下次打开还原 —— 桌面软件的基本礼貌
+        string UiFile { get { return Path.Combine(DataDir, "ui.txt"); } }
+
+        void RestoreBoundsFromDisk()
+        {
+            try
+            {
+                if (!File.Exists(UiFile)) { Size = new Size(1240, 872); return; }
+                string[] parts = File.ReadAllText(UiFile).Split(',');
+                if (parts.Length == 4)
+                {
+                    var r = new Rectangle(int.Parse(parts[0]), int.Parse(parts[1]), int.Parse(parts[2]), int.Parse(parts[3]));
+                    if (r.Width >= MinimumSize.Width && r.Height >= MinimumSize.Height)
+                    {
+                        var screen = Screen.FromRectangle(r).WorkingArea;
+                        if (screen.IntersectsWith(r)) { StartPosition = FormStartPosition.Manual; Bounds = r; return; }
+                    }
+                }
+            }
+            catch { }
+            Size = new Size(1240, 872);
+        }
+
+        void SaveBoundsToDisk()
+        {
+            try
+            {
+                Rectangle r = WindowState == FormWindowState.Normal ? Bounds : RestoreBounds;
+                File.WriteAllText(UiFile, r.X + "," + r.Y + "," + r.Width + "," + r.Height);
+            }
+            catch { }
         }
     }
 
@@ -178,7 +315,8 @@ static class Program
         sb.AppendLine("exe        : " + Application.ExecutablePath);
         sb.AppendLine("数据目录   : " + DataDir);
         sb.AppendLine("node       : " + (FindNode() ?? "(未找到)"));
-        sb.AppendLine("浏览器     : " + (FindBrowser() ?? "(未找到 Edge/Chrome)"));
+        sb.AppendLine("WebView2   : " + WebView2Version());
+        sb.AppendLine("Edge       : " + (FindBrowser() ?? "(未找到)"));
         sb.AppendLine("已有后端   : " + FindRunningBackend());
         sb.AppendLine("日志       : " + (ActiveLog ?? "(未写入)"));
         sb.AppendLine();
@@ -197,6 +335,16 @@ static class Program
         try { Process.Start("notepad.exe", "\"" + outFile + "\""); } catch { }
     }
 
+    static string WebView2Version()
+    {
+        try
+        {
+            string v = CoreWebView2Environment.GetAvailableBrowserVersionString();
+            return string.IsNullOrEmpty(v) ? "(运行时未安装)" : v;
+        }
+        catch (Exception ex) { return "(不可用: " + ex.Message + ")"; }
+    }
+
     static bool CanWrite(string dir)
     {
         try
@@ -211,9 +359,9 @@ static class Program
     }
 
     // ---------------------------------------------------------------- 资源释放
-    static System.Collections.Generic.List<string> ExtractAssets()
+    static List<string> ExtractAssets()
     {
-        var failed = new System.Collections.Generic.List<string>();
+        var failed = new List<string>();
         var asm = Assembly.GetExecutingAssembly();
         for (int i = 0; i < Assets.GetLength(0); i++)
         {
@@ -245,6 +393,15 @@ static class Program
     // ---------------------------------------------------------------- node 定位
     static string FindNode()
     {
+        // 1) 便携模式：exe 旁边自带的 node.exe（build.ps1 会顺手拷一份）
+        try
+        {
+            string beside = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "node.exe");
+            if (File.Exists(beside)) return beside;
+        }
+        catch { }
+
+        // 2) 用户手工指定的路径
         string cfg = Path.Combine(DataDir, "node.txt");
         try
         {
@@ -256,6 +413,7 @@ static class Program
         }
         catch { }
 
+        // 3) PATH
         string pathVar = Environment.GetEnvironmentVariable("PATH") ?? "";
         foreach (string dir in pathVar.Split(';'))
         {
@@ -268,6 +426,7 @@ static class Program
             catch { }
         }
 
+        // 4) 常见安装位置
         string[] guesses =
         {
             @"D:\nodejs\node.exe",
@@ -281,7 +440,7 @@ static class Program
     }
 
     // ---------------------------------------------------------------- 后端进程
-    static void StartBackend(string node)
+    static Process StartBackend(string node)
     {
         var psi = new ProcessStartInfo
         {
@@ -295,12 +454,14 @@ static class Program
         };
         // 把 exe 所在目录告诉后端：配置丢了/换机器时它能从这里往上找到 server/ 与 mindcraft/
         psi.EnvironmentVariables["MCAI_ROOT_HINT"] = AppDomain.CurrentDomain.BaseDirectory.TrimEnd('\\');
-        var p = Process.Start(psi);
+        Process p = Process.Start(psi);
+        StartedBackend = p;
         // 异步把输出丢掉，避免管道写满把后端卡死
         p.OutputDataReceived += (s, e) => { };
         p.ErrorDataReceived += (s, e) => { };
         p.BeginOutputReadLine();
         p.BeginErrorReadLine();
+        return p;
     }
 
     static int FindRunningBackend()
@@ -343,7 +504,8 @@ static class Program
         catch { return false; }
     }
 
-    // ---------------------------------------------------------------- 打开窗口
+    // ---------------------------------------------------------------- 兜底窗口
+    // 只在 WebView2 不可用时用：退回 Edge 应用窗口（老方案），别让用户没得用
     static void OpenPanelWindow(int port)
     {
         string url = "http://127.0.0.1:" + port + "/";
@@ -351,7 +513,7 @@ static class Program
         if (browser == null)
         {
             Log("没找到 Edge/Chrome，用默认浏览器打开");
-            Process.Start(url);   // 退回默认浏览器
+            try { Process.Start(url); } catch (Exception ex) { Fatal("Minecraft AI 控制面板", "面板已启动但窗口打不开。\n\n" + ex.Message + "\n\n请手动在浏览器打开：\n" + url); }
             return;
         }
         var psi = new ProcessStartInfo
@@ -363,18 +525,8 @@ static class Program
                         " --no-first-run --no-default-browser-check --disable-features=Translate",
             UseShellExecute = false,
         };
-        try
-        {
-            Process.Start(psi);
-            Log("已用 Edge 应用窗口打开: " + browser);
-        }
-        catch (Exception ex)
-        {
-            // --app + 独立 user-data-dir 在个别机器上会起不来：退回系统默认浏览器，至少能看见面板
-            Log("Edge 应用窗口失败(" + ex.Message + ")，改走默认浏览器");
-            try { Process.Start(url); }
-            catch (Exception ex2) { Fatal("Minecraft AI 控制面板", "面板已启动但窗口打不开。\n\n" + ex2.Message + "\n\n请手动在浏览器打开：\n" + url); }
-        }
+        try { Process.Start(psi); Log("已用 Edge 应用窗口打开（回退）: " + browser); }
+        catch (Exception ex) { Log("Edge 也失败了: " + ex.Message); }
     }
 
     static string FindBrowser()
