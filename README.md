@@ -24,10 +24,17 @@ Minecraft AI 一体化仓库：把 mindcraft 机器人、1.20.1 服务端配置�
 
 2. **补密钥**：`mindcraft/keys.json` 不入库，按 `keys.example.json` 填自己的 key（当前用的是 `DEEPSEEK_API_KEY` 指向 Cline 网关）。
 3. **补服务端 jar**：`server/server.jar`（1.20.1）也不入库。走 BMCLAPI 镜像下，`piston-data.mojang.com` 直连会超时。`server.properties` 里 `online-mode=false` + `enforce-secure-profile=false` 都必需。
-4. **编译面板**：`powershell -ExecutionPolicy Bypass -File panel/build.ps1` → `panel/dist/MC-AI-Control.exe`，双击即可。
+4. **编译面板**：`powershell -ExecutionPolicy Bypass -File panel/build.ps1` → `panel/dist/MC-AI-Control.exe`，双击即可。图标由 `panel/icon.ico` 提供，改了配色/像素图用 `panel/mkicon.cs` 重新生成。
 5. **路径**：面板首次启动会从 exe 所在目录逐级向上找 `server/`（含 `server.jar`）和 `mindcraft/`（含 `main.js`）并写进 `data/config.json`；找不到就去「设置」页手填。
 
 > 关面板不杀服务器和机器人（日志写文件、不走管道），下次打开会识别为「外部启动」。日志只跟新写入的行，不会回放上一局。
+
+**面板打不开时**：
+
+- 数据目录按 `%LOCALAPPDATA%\MC-AI-Control` → `exe 同目录\MC-AI-Control-data` → `%TEMP%\MC-AI-Control` 顺序挑第一个**能写**的。前一个被安全软件锁成只读时会自动落到下一个，不会静默失败。
+- 日志同时尝试这三处，落笔成功的那处会写在 `doctor.txt` 里；面板文件的写入失败会直接弹框点名是哪个文件。
+- `MC-AI-Control.exe --doctor` 生成 `doctor.txt`（node/浏览器/端口/目录可写性/已安装文件时间戳）并用记事本打开。
+- 完全绕过 exe：双击 `panel/启动面板.bat`，它直接跑 `node server.js` 再开 Edge 应用窗口。
 
 ## 不入库的东西
 

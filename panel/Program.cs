@@ -16,11 +16,34 @@ using System.Windows.Forms;
 
 static class Program
 {
-    static readonly string DataDir = Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "MC-AI-Control");
+    // 数据目录要挑一个「真的能写」的地方：
+    // 默认 %LOCALAPPDATA%，但个别机器上这个目录会被安全软件或残留权限锁成只读，
+    // 那时启动器只会静默失败（用户看到的就是「双击没反应」）。
+    // 所以启动时按顺序试：%LOCALAPPDATA% → exe 同目录（便携）→ %TEMP%。
+    static readonly string DataDir = ResolveDataDir();
     static readonly string AppDir = Path.Combine(DataDir, "app");
     static readonly string BrowserDir = Path.Combine(DataDir, "browser");
     static readonly string RendererDir = Path.Combine(AppDir, "renderer");
+
+    static string ResolveDataDir()
+    {
+        string local = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "MC-AI-Control");
+        string portable = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "MC-AI-Control-data");
+        string temp = Path.Combine(Path.GetTempPath(), "MC-AI-Control");
+        foreach (string c in new[] { local, portable, temp })
+        {
+            try
+            {
+                Directory.CreateDirectory(c);
+                string probe = Path.Combine(c, ".write-probe");
+                File.WriteAllText(probe, "x");
+                File.Delete(probe);
+                return c;
+            }
+            catch { }
+        }
+        return local;   // 全都不行就用默认的，让后面的报错把原因说清楚
+    }
 
     // 内嵌资源 → 目标文件
     static readonly string[,] Assets = new string[,]
@@ -32,30 +55,81 @@ static class Program
         { "README.txt",           "使用说明.txt" },
     };
 
-    static readonly string LogFile = Path.Combine(DataDir, "launcher.log");
+    // 日志可能落在三处：%LOCALAPPDATA%（正常）、exe 同目录（便携/被重定向时）、%TEMP%（兜底）。
+    // 只写一处是很危险的：那处不可写时，用户双击后什么都不会发生，现场一点线索都不留。
+    static readonly string LogFileData = Path.Combine(DataDir, "launcher.log");
+    static readonly string LogFileExe = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "launcher.log");
+    static readonly string LogFileTmp = Path.Combine(Path.GetTempPath(), "MC-AI-Control-launcher.log");
+    static string ActiveLog;
 
     static void Log(string msg)
     {
-        try
+        string line = DateTime.Now.ToString("HH:mm:ss.fff") + "  " + msg + Environment.NewLine;
+        string[] candidates = { ActiveLog, LogFileData, LogFileExe, LogFileTmp };
+        foreach (string f in candidates)
         {
-            File.AppendAllText(LogFile, DateTime.Now.ToString("HH:mm:ss.fff") + "  " + msg + Environment.NewLine, Encoding.UTF8);
+            if (string.IsNullOrEmpty(f)) continue;
+            try
+            {
+                File.AppendAllText(f, line, Encoding.UTF8);
+                ActiveLog = f;
+                return;
+            }
+            catch { }
         }
-        catch { }
+    }
+
+    // 出错时把「到底哪个环节挂了」摆到用户面前，而不是静默退出
+    static void Fatal(string title, string detail)
+    {
+        Log("错误: " + detail.Replace(Environment.NewLine, " | "));
+        string where = ActiveLog ?? "(日志不可写)";
+        MessageBox.Show(detail + "\n\n日志: " + where + "\n数据目录: " + DataDir,
+            title, MessageBoxButtons.OK, MessageBoxIcon.Error);
     }
 
     [STAThread]
     static void Main(string[] args)
     {
+        if (args.Length > 0 && (args[0] == "--doctor" || args[0] == "-d"))
+        {
+            RunDoctor();
+            return;
+        }
+
         try
         {
             Log("======== 启动 ========");
-            Directory.CreateDirectory(AppDir);
-            Directory.CreateDirectory(RendererDir);
-            Directory.CreateDirectory(BrowserDir);
+            Log("exe: " + Application.ExecutablePath);
+
+            try
+            {
+                Directory.CreateDirectory(AppDir);
+                Directory.CreateDirectory(RendererDir);
+                Directory.CreateDirectory(BrowserDir);
+            }
+            catch (Exception ex)
+            {
+                Fatal("Minecraft AI 控制面板",
+                    "无法创建数据目录：\n" + DataDir + "\n\n" + ex.Message +
+                    "\n\n常见原因：目录被安全软件锁住，或该路径没有写权限。\n" +
+                    "可以手动删除这个目录后重试，或者把面板放到别的磁盘。");
+                return;
+            }
             Log("目录已就绪: " + AppDir);
 
-            ExtractAssets();
-            Log("资源释放完成");
+            var failed = ExtractAssets();
+            Log("资源释放完成" + (failed.Count > 0 ? "（失败 " + failed.Count + " 项）" : ""));
+            if (failed.Count > 0)
+            {
+                // 资源没写进去 = 跑的是旧后端，症状会莫名其妙（比如改了的行为不生效）。
+                // 这必须让用户看见，不能吞掉。
+                Fatal("Minecraft AI 控制面板",
+                    "面板文件没能写入：\n" + string.Join("\n", failed.ToArray()) +
+                    "\n\n通常是安全软件拦截了对这个目录的写入。\n" +
+                    "请把 " + DataDir + " 加入杀软白名单，然后删除该目录重试。");
+                return;
+            }
 
             // 1) 已有后端在跑就直接复用，避免开出两个
             int port = FindRunningBackend();
@@ -68,11 +142,9 @@ static class Program
                 Log("node.exe: " + (node ?? "(未找到)"));
                 if (node == null)
                 {
-                    Log("错误：找不到 node.exe");
-                    MessageBox.Show(
+                    Fatal("Minecraft AI 控制面板",
                         "没有找到 node.exe。\n\n请先安装 Node.js（https://nodejs.org），\n" +
-                        "或把 node.exe 的完整路径写进：\n" + Path.Combine(DataDir, "node.txt"),
-                        "Minecraft AI 控制面板", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                        "或把 node.exe 的完整路径写进：\n" + Path.Combine(DataDir, "node.txt"));
                     return;
                 }
                 StartBackend(node);
@@ -81,9 +153,8 @@ static class Program
                 Log("后端端口: " + port);
                 if (port == 0)
                 {
-                    Log("错误：后端启动失败");
-                    MessageBox.Show("后端启动失败（端口无响应）。\n\n可手动排查：\n  cd \"" + AppDir + "\"\n  \"" + node + "\" server.js",
-                        "Minecraft AI 控制面板", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                    Fatal("Minecraft AI 控制面板",
+                        "后端启动失败（端口无响应）。\n\n可手动排查：\n  cd \"" + AppDir + "\"\n  \"" + node + "\" server.js");
                     return;
                 }
             }
@@ -94,25 +165,66 @@ static class Program
         }
         catch (Exception ex)
         {
-            Log("异常: " + ex);
-            MessageBox.Show("启动出错：" + ex.Message, "Minecraft AI 控制面板", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            Fatal("Minecraft AI 控制面板", "启动出错：" + ex.Message + "\n\n" + ex.GetType().Name);
         }
     }
 
-    // ---------------------------------------------------------------- 资源释放
-    static void ExtractAssets()
+    // ---------------------------------------------------------------- 自检
+    // 双击没反应时用得上：MC-AI-Control.exe --doctor
+    static void RunDoctor()
     {
+        var sb = new StringBuilder();
+        sb.AppendLine("MC-AI-Control 自检  " + DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"));
+        sb.AppendLine("exe        : " + Application.ExecutablePath);
+        sb.AppendLine("数据目录   : " + DataDir);
+        sb.AppendLine("node       : " + (FindNode() ?? "(未找到)"));
+        sb.AppendLine("浏览器     : " + (FindBrowser() ?? "(未找到 Edge/Chrome)"));
+        sb.AppendLine("已有后端   : " + FindRunningBackend());
+        sb.AppendLine("日志       : " + (ActiveLog ?? "(未写入)"));
+        sb.AppendLine();
+        foreach (string d in new[] { DataDir, AppDir, BrowserDir })
+            sb.AppendLine("可写 " + (CanWrite(d) ? "是" : "否") + "  " + d);
+        sb.AppendLine();
+        sb.AppendLine("--- 已安装的面板文件 ---");
+        foreach (string f in new[] { "server.js", @"renderer\index.html", @"renderer\styles.css", @"renderer\app.js", "使用说明.txt" })
+        {
+            string p = Path.Combine(AppDir, f);
+            sb.AppendLine((File.Exists(p) ? "有" : "缺") + "  " + f + (File.Exists(p) ? "  " + new FileInfo(p).Length + "B  " + File.GetLastWriteTime(p).ToString("MM-dd HH:mm") : ""));
+        }
+        string outFile = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "doctor.txt");
+        try { File.WriteAllText(outFile, sb.ToString(), new UTF8Encoding(false)); }
+        catch { outFile = LogFileTmp; try { File.WriteAllText(outFile, sb.ToString(), new UTF8Encoding(false)); } catch { } }
+        try { Process.Start("notepad.exe", "\"" + outFile + "\""); } catch { }
+    }
+
+    static bool CanWrite(string dir)
+    {
+        try
+        {
+            Directory.CreateDirectory(dir);
+            string probe = Path.Combine(dir, ".write-probe");
+            File.WriteAllText(probe, "x");
+            File.Delete(probe);
+            return true;
+        }
+        catch { return false; }
+    }
+
+    // ---------------------------------------------------------------- 资源释放
+    static System.Collections.Generic.List<string> ExtractAssets()
+    {
+        var failed = new System.Collections.Generic.List<string>();
         var asm = Assembly.GetExecutingAssembly();
         for (int i = 0; i < Assets.GetLength(0); i++)
         {
             string res = Assets[i, 0];
             string target = Path.Combine(AppDir, Assets[i, 1]);
-            Directory.CreateDirectory(Path.GetDirectoryName(target));
             try
             {
+                Directory.CreateDirectory(Path.GetDirectoryName(target));
                 using (Stream s = asm.GetManifestResourceStream(res))
                 {
-                    if (s == null) continue;
+                    if (s == null) { failed.Add(Assets[i, 1] + "（exe 内缺少该资源）"); continue; }
                     using (var sr = new StreamReader(s, Encoding.UTF8))
                     {
                         string content = sr.ReadToEnd();
@@ -122,8 +234,12 @@ static class Program
                     }
                 }
             }
-            catch { /* 单个资源失败不影响其它 */ }
+            catch (Exception ex)
+            {
+                failed.Add(Assets[i, 1] + "  →  " + ex.Message);
+            }
         }
+        return failed;
     }
 
     // ---------------------------------------------------------------- node 定位
@@ -234,6 +350,7 @@ static class Program
         string browser = FindBrowser();
         if (browser == null)
         {
+            Log("没找到 Edge/Chrome，用默认浏览器打开");
             Process.Start(url);   // 退回默认浏览器
             return;
         }
@@ -246,7 +363,18 @@ static class Program
                         " --no-first-run --no-default-browser-check --disable-features=Translate",
             UseShellExecute = false,
         };
-        Process.Start(psi);
+        try
+        {
+            Process.Start(psi);
+            Log("已用 Edge 应用窗口打开: " + browser);
+        }
+        catch (Exception ex)
+        {
+            // --app + 独立 user-data-dir 在个别机器上会起不来：退回系统默认浏览器，至少能看见面板
+            Log("Edge 应用窗口失败(" + ex.Message + ")，改走默认浏览器");
+            try { Process.Start(url); }
+            catch (Exception ex2) { Fatal("Minecraft AI 控制面板", "面板已启动但窗口打不开。\n\n" + ex2.Message + "\n\n请手动在浏览器打开：\n" + url); }
+        }
     }
 
     static string FindBrowser()

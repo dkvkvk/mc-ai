@@ -14,6 +14,7 @@ $args = @(
     '/target:winexe',
     '/platform:anycpu',
     '/optimize+',
+    '/win32icon:icon.ico',
     '/out:dist\MC-AI-Control.exe',
     '/r:System.Windows.Forms.dll',
     '/r:System.Drawing.dll',
