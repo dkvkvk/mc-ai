@@ -38,7 +38,7 @@ Minecraft AI 一体化仓库：把 mindcraft 机器人、1.20.1 服务端配置�
 **面板打不开时**：
 
 - 真相先看日志：`launcher.log` 在数据目录里，写不进去会依次落到 exe 同目录、`%TEMP%`。
-- 数据目录按 `%LOCALAPPDATA%\MC-AI-Control` → `exe 同目录\MC-AI-Control-data` → `%TEMP%\MC-AI-Control` 顺序挑第一个**能写**的。前一个被安全软件锁成只读时会自动落到下一个，不会静默失败。
+- 数据目录就在**安装目录**里：`<exe 所在目录>\MC-AI-Control-data`（配置、日志、机器人清单、WebView2 缓存全在里面）。装到哪个盘就留在哪个盘，不写 C 盘的 AppData / 用户目录。只有在安装目录不可写时（例如装进 Program Files）才退到 `%LOCALAPPDATA%\MC-AI-Control`，再不行退 `%TEMP%`，落在哪会写进 `launcher.log`。
 - `MC-AI-Control.exe --doctor` 生成 `doctor.txt`（node / WebView2 / Edge / 端口 / 目录可写性 / 已安装文件时间戳）并用记事本打开。
 
 ## 不入库的东西

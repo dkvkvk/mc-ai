@@ -26,10 +26,11 @@ using Microsoft.Web.WebView2.WinForms;
 
 static class Program
 {
-    // 数据目录要挑一个「真的能写」的地方：
-    // 默认 %LOCALAPPDATA%，但个别机器上这个目录会被安全软件或残留权限锁成只读，
-    // 那时启动器只会静默失败（用户看到的就是「双击没反应」）。
-    // 所以启动时按顺序试：%LOCALAPPDATA% → exe 同目录（便携）→ %TEMP%。
+    // 数据目录**就在安装目录里**（<exe 所在目录>\MC-AI-Control-data）：
+    // 用户明确要求过，安装版不许把配置/日志/cookie 写到 C 盘的 AppData 或用户目录，
+    // 装到哪个盘就都留在那个盘，卸载时也好找。
+    // 只有当安装目录本身不可写（例如装进 Program Files）时，才退到 %LOCALAPPDATA%；
+    // 再不行退到 %TEMP%。这三步都不会静默失败，最后落在哪会写进 launcher.log。
     static readonly string DataDir = ResolveDataDir();
     static readonly string AppDir = Path.Combine(DataDir, "app");
     static readonly string BrowserDir = Path.Combine(DataDir, "browser");
@@ -37,10 +38,10 @@ static class Program
 
     static string ResolveDataDir()
     {
-        string local = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "MC-AI-Control");
         string portable = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "MC-AI-Control-data");
+        string local = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "MC-AI-Control");
         string temp = Path.Combine(Path.GetTempPath(), "MC-AI-Control");
-        foreach (string c in new[] { local, portable, temp })
+        foreach (string c in new[] { portable, local, temp })
         {
             try
             {
@@ -52,7 +53,7 @@ static class Program
             }
             catch { }
         }
-        return local;   // 全都不行就用默认的，让后面的报错把原因说清楚
+        return portable;   // 全都不行就用安装目录，让后面的报错把原因说清楚
     }
 
     // 内嵌资源 → 目标文件
@@ -65,7 +66,7 @@ static class Program
         { "README.txt",           "使用说明.txt" },
     };
 
-    // 日志可能落在三处：%LOCALAPPDATA%（正常）、exe 同目录（便携/被重定向时）、%TEMP%（兜底）。
+    // 日志可能落在三处：数据目录（正常，就在安装目录里）、exe 同目录、%TEMP%（兜底）。
     // 只写一处是很危险的：那处不可写时，用户双击后什么都不会发生，现场一点线索都不留。
     static readonly string LogFileData = Path.Combine(DataDir, "launcher.log");
     static readonly string LogFileExe = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "launcher.log");

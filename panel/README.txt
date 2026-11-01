@@ -55,10 +55,11 @@ B. 便携版
 
 文件都在哪
 ----------
-数据目录按顺序挑第一个「能写的」：
+数据目录就在安装目录里（<程序所在目录>\MC-AI-Control-data），不写 C 盘的
+AppData / 用户目录；装到哪个盘，数据和程序就在一起，卸载时这份数据会保留。
+万一安装目录不可写（比如装进 Program Files），才按顺序退：
   1. %LOCALAPPDATA%\MC-AI-Control
-  2. exe 同目录\MC-AI-Control-data        ← 便携模式
-  3. %TEMP%\MC-AI-Control
+  2. %TEMP%\MC-AI-Control
 
 - 程序解压目录：<数据目录>\app
 - 面板配置：    <数据目录>\app\data\config.json

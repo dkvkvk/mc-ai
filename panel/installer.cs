@@ -231,7 +231,9 @@ static class SetupProgram
             SafeDelete(Path.Combine(DesktopDir, AppName + ".lnk"));
             try { Registry.CurrentUser.DeleteSubKeyTree(UninstallKey, false); } catch { }
 
-            // 先删自己以外的文件，再把自己删掉
+            // 数据目录（安装目录\MC-AI-Control-data）整份保留，理由同 uninstaller.cs：
+            // 卸载一般是重装/换版本，不该顺手删掉用户配好的机器人清单和 API Key。
+            string keep = Path.Combine(dir, "MC-AI-Control-data");
             string self = Application.ExecutablePath;
             if (Directory.Exists(dir))
             {
@@ -240,11 +242,16 @@ static class SetupProgram
                     if (string.Equals(f, self, StringComparison.OrdinalIgnoreCase)) continue;
                     SafeDelete(f);
                 }
-                if (!string.Equals(self, Path.Combine(dir, AppExe), StringComparison.OrdinalIgnoreCase))
-                    SafeDelete(Path.Combine(dir, AppExe));
-                try { Directory.Delete(dir, true); } catch { }
+                foreach (string d in Directory.GetDirectories(dir))
+                {
+                    if (string.Equals(Path.GetFullPath(d).TrimEnd('\\'),
+                                      Path.GetFullPath(keep).TrimEnd('\\'), StringComparison.OrdinalIgnoreCase)) continue;
+                    try { Directory.Delete(d, true); } catch { }
+                }
+                if (!Directory.Exists(keep)) { try { Directory.Delete(dir, true); } catch { } }
             }
-            // 自己还占着目录里的 uninstall.exe，删不掉：交给一个延迟的 cmd 收尾
+            // 目录没删干净（要么数据目录要留，要么自己被占用）：交给一个延迟的 cmd 收尾，
+            // 用不带 /s 的 rd，数据目录还在时它自然失败，只清掉能清的部分。
             if (Directory.Exists(dir)) ScheduleSelfDelete(dir);
         }
         catch { }
@@ -254,7 +261,11 @@ static class SetupProgram
     {
         try
         {
-            var psi = new ProcessStartInfo("cmd.exe", "/c ping -n 3 127.0.0.1 >nul & rd /s /q \"" + dir.TrimEnd('\\') + "\"")
+            string cmdLine = "/c ping -n 3 127.0.0.1 >nul & rd \"" + dir.TrimEnd('\\') + "\"";
+            string self = Application.ExecutablePath;
+            if (self.StartsWith(dir, StringComparison.OrdinalIgnoreCase))
+                cmdLine = "/c ping -n 3 127.0.0.1 >nul & del /f /q \"" + self + "\" & rd \"" + dir.TrimEnd('\\') + "\"";
+            var psi = new ProcessStartInfo("cmd.exe", cmdLine)
             {
                 CreateNoWindow = true,
                 UseShellExecute = false,
@@ -616,7 +627,7 @@ static class SetupProgram
             {
                 Bounds = new Rectangle(24, 148, 580, 60),
                 ForeColor = Dim,
-                Text = "面板运行时的配置、日志和机器人清单会写在数据目录里\n（默认 %LOCALAPPDATA%\\MC-AI-Control），卸载时不会删除，方便重装后继续用。"
+                Text = "面板运行时的配置、日志和机器人清单都写在这个文件夹里\n（安装目录\\MC-AI-Control-data），不会放到 C 盘的 AppData 或用户目录。\n卸载时这份数据会保留，方便重装后继续用。"
             };
             body.Controls.Add(info);
         }

@@ -99,6 +99,9 @@ static class UninstallProgram
         SafeDelete(Path.Combine(DesktopDir, AppName + ".lnk"));
         try { Registry.CurrentUser.DeleteSubKeyTree(UninstallKey, false); } catch { }
 
+        // 数据目录（安装目录\MC-AI-Control-data）整份保留：配置、日志、机器人清单都在里面，
+        // 用户卸载多半是为了重装或换版本，不该顺手把人家配好的东西删掉。
+        string keep = Path.Combine(dir, "MC-AI-Control-data");
         try
         {
             if (Directory.Exists(dir))
@@ -107,18 +110,25 @@ static class UninstallProgram
                 foreach (string f in Directory.GetFiles(dir))
                     if (!string.Equals(f, self, StringComparison.OrdinalIgnoreCase)) SafeDelete(f);
                 foreach (string d in Directory.GetDirectories(dir))
+                {
+                    if (string.Equals(Path.GetFullPath(d).TrimEnd('\\'),
+                                      Path.GetFullPath(keep).TrimEnd('\\'), StringComparison.OrdinalIgnoreCase)) continue;
                     try { Directory.Delete(d, true); } catch { }
-                try { Directory.Delete(dir, true); } catch { }
+                }
+                if (!Directory.Exists(keep)) { try { Directory.Delete(dir, true); } catch { } }
             }
         }
         catch { }
 
-        // 自己还占着目录里的文件，删不掉自己：交给一个延迟的 cmd 收尾
+        // 自己还占着目录里的文件，删不掉自己：交给一个延迟的 cmd 收尾。
+        // 注意用不带 /s 的 rd —— 数据目录还在时它会失败，正好只删掉自己、留下数据。
         if (Directory.Exists(dir))
         {
             try
             {
-                var psi = new ProcessStartInfo("cmd.exe", "/c ping -n 3 127.0.0.1 >nul & rd /s /q \"" + dir.TrimEnd('\\') + "\"")
+                string cmdLine = "/c ping -n 3 127.0.0.1 >nul & del /f /q \"" + Application.ExecutablePath +
+                                 "\" & rd \"" + dir.TrimEnd('\\') + "\"";
+                var psi = new ProcessStartInfo("cmd.exe", cmdLine)
                 {
                     CreateNoWindow = true,
                     UseShellExecute = false,
