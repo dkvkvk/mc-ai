@@ -34,7 +34,6 @@ const api = {
 const state = {
     modelGroups: [],
     modelAliases: 0,
-    usable: null,
     cfg: null,
     status: null,
     logs: [],
@@ -456,7 +455,6 @@ $('nb-fetch-models').addEventListener('click', async () => {
         // 这里默认只放出「当前模型所属的 provider」，其余按需切换；输入框里已填的值永远保留。
         state.modelGroups = r.groups || [{ provider: '全部', models: r.models }];
         state.modelAliases = r.aliases || 0;
-        state.usable = null;   // 列表换了，旧的可用性结论作废
         const cur = $('nb-model').value.trim();
         const sel = $('nb-model-provider');
         sel.innerHTML = '';
@@ -466,51 +464,31 @@ $('nb-fetch-models').addEventListener('click', async () => {
             sel.appendChild(o);
         }
         // 默认选中「包含当前模型」的那一组，否则第一组
-        const hit = state.modelGroups.find((g) => g.models.includes(cur));
-        sel.value = (hit || state.modelGroups[0]).provider;
+        const hit2 = state.modelGroups.find((g) => g.models.includes(cur));
+        sel.value = (hit2 || state.modelGroups[0]).provider;
         sel.hidden = state.modelGroups.length < 2;
         fillModelList();
-        toast('拿到 ' + r.models.length + ' 个模型，已按 provider 分组（当前看 ' + sel.value + '）', 'ok');
+        // cline 网关走 recommended-models：主组是套餐内真能用的，其余（免费/推荐/cloud）分开列
+        const fromCline = r.source === 'recommended-models';
+        if (fromCline) {
+            const main = state.modelGroups[0];
+            const rest = state.modelGroups.slice(1).map((g) => g.provider + ' ' + g.models.length).join(' / ');
+            toast('Cline 套餐内 ' + main.models.length + ' 个可用' + (rest ? '（另有 ' + rest + '）' : '') +
+                  '，当前看 ' + sel.value, 'ok');
+        } else {
+            toast('拿到 ' + r.models.length + ' 个模型，已按 provider 分组（当前看 ' + sel.value + '）', 'ok');
+        }
     } finally {
         btn.disabled = false; btn.textContent = '自动获取';
     }
 });
 
 
-// 测可用：网关会把「存在但你这账号用不了」的模型一起列出来，光看列表没用。
-// 这里对当前这一组挨个发 max_tokens:1 的请求，只把真正能跑通的留在候选里。
-$('nb-probe-models').addEventListener('click', async () => {
-    const url = $('nb-url').value.trim();
-    const key = $('nb-key').value.trim();
-    if (!url) { toast('先填接口地址', 'err'); return; }
-    const g = (state.modelGroups || []).find((x) => x.provider === $('nb-model-provider').value);
-    const models = (g ? g.models : (state.modelGroups || []).flatMap((x) => x.models)).slice(0, 60);
-    if (!models.length) { toast('先点「自动获取」拿到模型列表', 'err'); return; }
-    const btn = $('nb-probe-models');
-    btn.disabled = true; btn.textContent = '测…';
-    try {
-        const r = await post('/api/models/probe', { url, apiKey: key, models });
-        if (!r.ok) { toast(r.msg || '探测失败', 'err'); return; }
-        state.usable = new Set(r.usable);
-        const bad = r.results.filter((x) => !x.ok);
-        fillModelList(r.usable);
-        const firstBad = bad[0];
-        toast('可用 ' + r.usable.length + '/' + r.results.length + ' 个' +
-              (firstBad ? '（例：' + firstBad.model + ' → ' + (firstBad.code || '') + ' ' + (firstBad.msg || '') + '）' : ''),
-              r.usable.length ? 'ok' : 'err');
-    } finally {
-        btn.disabled = false; btn.textContent = '测可用';
-    }
-});
-
 // 按选中的 provider 填 datalist（当前输入值始终保留在第一位）
-function fillModelList(onlyUsable) {
+function fillModelList() {
     const cur = $('nb-model').value.trim();
     const g = (state.modelGroups || []).find((x) => x.provider === $('nb-model-provider').value);
-    let models = g ? g.models : (state.modelGroups || []).flatMap((x) => x.models);
-    // onlyUsable 传进来可能是数组（接口返回的 usable），统一成 Set 再判断
-    const keep = onlyUsable ? new Set(onlyUsable) : state.usable;
-    if (keep && keep.size) models = models.filter((m) => keep.has(m) || m === cur);
+    const models = g ? g.models : (state.modelGroups || []).flatMap((x) => x.models);
     const list = $('nb-model-list');
     list.innerHTML = '';
     const seen = new Set();
@@ -521,7 +499,7 @@ function fillModelList(onlyUsable) {
     const alias = (state.modelAliases && g) ? '（其中 ' + models.filter((m) => m.startsWith('cline-pass/')).length + ' 个 cline-pass 别名）' : '';
     $('nb-model-hint').textContent = '候选 ' + (list.options.length - (cur ? 1 : 0)) + ' 个' + alias + '：输入框里打字即过滤，点候选即填入';
 }
-$('nb-model-provider').addEventListener('change', () => fillModelList());
+$('nb-model-provider').addEventListener('change', fillModelList);
 
 // 添加机器人（添加后立刻启动它）
 $('nb-add').addEventListener('click', async () => {

@@ -270,110 +270,84 @@ function botKeyState(bot) {
     return { ok: false, name, from: '' };
 }
 
-// 只发一条 1 token 的请求，看这个模型到底能不能用（网关会把没权限的模型也列出来）
-function probeModel(url, apiKey, model) {
+// 通用 GET：返回 { status, json, text }
+function getJSON(urlObj, apiKey, timeoutMs) {
     return new Promise((resolve) => {
-        let base;
-        try { base = new URL(String(url || '').trim()); } catch { return resolve({ model, ok: false, msg: '接口地址不合法' }); }
-        base.pathname = base.pathname.replace(/\/+$/, '') + '/chat/completions';
-        const body = JSON.stringify({ model, messages: [{ role: 'user', content: 'hi' }], max_tokens: 1, stream: false });
-        const mod = base.protocol === 'https:' ? require('https') : require('http');
-        const req = mod.request(base, {
-            method: 'POST',
-            headers: Object.assign({
-                'Content-Type': 'application/json',
-                'Content-Length': Buffer.byteLength(body),
-            }, apiKey ? { Authorization: 'Bearer ' + apiKey } : {}),
-            timeout: 20000,
-        }, (res) => {
-            let buf = '';
-            res.setEncoding('utf8');
-            res.on('data', (c) => { buf += c; });
-            res.on('end', () => {
-                const ok = res.statusCode >= 200 && res.statusCode < 300;
-                let msg = '';
-                if (!ok) { try { const j = JSON.parse(buf); msg = (j.error && (j.error.message || j.error.code)) || ''; } catch { msg = buf.slice(0, 120); } }
-                resolve({ model, ok, code: res.statusCode, msg });
-            });
-        });
-        req.on('timeout', () => { req.destroy(new Error('超时 20s')); });
-        req.on('error', (e) => resolve({ model, ok: false, msg: e.message }));
-        req.write(body);
-        req.end();
-    });
-}
-
-// 并发探一遍（限 4 个并发，别把网关打挂）
-async function probeModels(url, apiKey, models) {
-    const list = [...new Set(models)].slice(0, 60);   // 一次最多 60 个，防手滑把整库都探了
-    const results = [];
-    let i = 0;
-    const workers = new Array(Math.min(4, list.length)).fill(0).map(async () => {
-        while (i < list.length) {
-            const m = list[i++];
-            results.push(await probeModel(url, apiKey, m));
-        }
-    });
-    await Promise.all(workers);
-    return results;
-}
-
-// 拉取 OpenAI 兼容接口的模型列表（GET <url>/models）
-function fetchModels(url, apiKey) {
-    return new Promise((resolve) => {
-        let base;
-        try { base = new URL(String(url || '').trim()); } catch { return resolve({ ok: false, msg: '接口地址不是合法 URL' }); }
-        base.pathname = base.pathname.replace(/\/+$/, '') + '/models';
-        const mod = base.protocol === 'https:' ? require('https') : require('http');
-        const req = mod.request(base, {
+        const mod = urlObj.protocol === 'https:' ? require('https') : require('http');
+        const req = mod.request(urlObj, {
             method: 'GET',
             headers: Object.assign({ Accept: 'application/json' }, apiKey ? { Authorization: 'Bearer ' + apiKey } : {}),
-            timeout: 15000,
+            timeout: timeoutMs || 15000,
         }, (res) => {
             let buf = '';
             res.setEncoding('utf8');
             res.on('data', (c) => { buf += c; });
             res.on('end', () => {
-                if (res.statusCode < 200 || res.statusCode >= 300) {
-                    return resolve({ ok: false, msg: '接口返回 ' + res.statusCode + '：' + buf.slice(0, 200) });
-                }
-                let json;
-                try { json = JSON.parse(buf); } catch { return resolve({ ok: false, msg: '返回的不是 JSON' }); }
-                const list = (json.data || json.models || []).map((m) => (typeof m === 'string' ? m : (m.id || m.name || ''))).filter(Boolean);
-                if (!list.length) return resolve({ ok: false, msg: '接口没有返回模型列表' });
-                // 只留能直接用的 id：~xxx-latest 是滚动别名、xxx:batch 是批处理版本，混在列表里纯噪音
-                const clean = list.filter((id) => !id.startsWith('~') && !id.includes(':') && !id.startsWith('@preset/'));
-                // Cline 网关（api.cline.bot）的 /models 只按 provider/model 列，不列 cline-pass/*。
-                // 那是 Cline 客户端的路由别名，规则就是 cline-pass/<叶子名>：
-                //   默认的 cline-pass/deepseek-v4.1-flash  ↔  接口里的 deepseek/deepseek-v4.1-flash
-                // 所以按叶子名补一份别名，并归到它来源的那个 provider 分组里。
-                const isCline = /cline/i.test(base.hostname);
-                const groups = new Map();
-                let aliasCount = 0;
-                for (const id of clean) {
-                    const provider = id.includes('/') ? id.split('/')[0] : '其它';
-                    if (!groups.has(provider)) groups.set(provider, []);
-                    groups.get(provider).push(id);
-                    if (isCline) {
-                        const leaf = id.split('/').pop();
-                        const alias = 'cline-pass/' + leaf;
-                        if (leaf && !clean.includes(alias) && !groups.get(provider).includes(alias)) {
-                            groups.get(provider).push(alias);
-                            aliasCount++;
-                        }
-                    }
-                }
-                const groupList = [...groups.entries()]
-                    .map(([provider, models]) => ({ provider, models: [...new Set(models)].sort() }))
-                    .sort((a, b) => b.models.length - a.models.length);
-                const all = [...new Set(groupList.flatMap((g) => g.models))].sort();
-                resolve({ ok: true, models: all, groups: groupList, aliases: aliasCount });
+                let json = null;
+                try { json = JSON.parse(buf); } catch { }
+                resolve({ status: res.statusCode, json, text: buf });
             });
         });
-        req.on('timeout', () => { req.destroy(new Error('超时 15s')); });
-        req.on('error', (e) => resolve({ ok: false, msg: '请求失败：' + e.message }));
+        req.on('timeout', () => { req.destroy(new Error('超时')); });
+        req.on('error', (e) => resolve({ status: 0, json: null, text: e.message }));
         req.end();
     });
+}
+
+// Cline 网关的真正可用清单：/ai/cline/recommended-models 里的 clinePass。
+// /models 列的是网关认识的全部模型（400+、含大量这账号用不了的），拿它当候选就是噪音。
+async function fetchClineBuckets(base, apiKey) {
+    const u = new URL(base.toString());
+    u.pathname = u.pathname.replace(/\/+$/, '') + '/ai/cline/recommended-models';
+    const r = await getJSON(u, apiKey, 20000);
+    if (r.status < 200 || r.status >= 300 || !r.json) return null;
+    const ids = (v) => (Array.isArray(v) ? v : []).map((m) => (typeof m === 'string' ? m : (m && (m.id || m.name)) || '')).filter(Boolean);
+    const groups = [
+        { provider: 'cline-pass 套餐内', models: ids(r.json.clinePass) },
+        { provider: '免费', models: ids(r.json.free) },
+        { provider: '推荐', models: ids(r.json.recommended) },
+        { provider: 'clineCloud', models: ids(r.json.clineCloud) },
+    ].filter((g) => g.models.length);
+    if (!groups.length) return null;
+    // 套餐内那一组按接口给的顺序（有主次），其余去重即可
+    return groups;
+}
+
+// 拉取 OpenAI 兼容接口的模型列表；cline 网关优先走 recommended-models
+async function fetchModels(url, apiKey) {
+    let base;
+    try { base = new URL(String(url || '').trim()); } catch { return { ok: false, msg: '接口地址不是合法 URL' }; }
+
+    if (/cline/i.test(base.hostname)) {
+        const groups = await fetchClineBuckets(base, apiKey);
+        if (groups) {
+            const models = [...new Set(groups.flatMap((g) => g.models))];
+            return { ok: true, models, groups, aliases: 0, source: 'recommended-models' };
+        }
+        // recommended-models 不可用（接口改版/网络）就回落到 /models，别让用户没列表可点
+    }
+
+    const listUrl = new URL(base.toString());
+    listUrl.pathname = listUrl.pathname.replace(/\/+$/, '') + '/models';
+    const r = await getJSON(listUrl, apiKey);
+    if (r.status < 200 || r.status >= 300) return { ok: false, msg: '接口返回 ' + r.status + '：' + String(r.text || '').slice(0, 200) };
+    if (!r.json) return { ok: false, msg: '返回的不是 JSON' };
+
+    const list = (r.json.data || r.json.models || []).map((m) => (typeof m === 'string' ? m : (m.id || m.name || ''))).filter(Boolean);
+    if (!list.length) return { ok: false, msg: '接口没有返回模型列表' };
+    // 只留能直接用的 id：~xxx-latest 是滚动别名、xxx:batch 是批处理版本，混在列表里纯噪音
+    const clean = list.filter((id) => !id.startsWith('~') && !id.includes(':') && !id.startsWith('@preset/'));
+    const groups = new Map();
+    for (const id of clean) {
+        const provider = id.includes('/') ? id.split('/')[0] : '其它';
+        if (!groups.has(provider)) groups.set(provider, []);
+        groups.get(provider).push(id);
+    }
+    const groupList = [...groups.entries()]
+        .map(([provider, models]) => ({ provider, models: [...new Set(models)].sort() }))
+        .sort((a, b) => b.models.length - a.models.length);
+    const all = [...new Set(groupList.flatMap((g) => g.models))].sort();
+    return { ok: true, models: all, groups: groupList, aliases: 0, source: 'models' };
 }
 
 // 机器人发言语言固定 en（见 botSettings 里的说明）；这里集中定义，界面和日志都以这个为准
@@ -964,16 +938,6 @@ const server = http.createServer(async (req, res) => {
             bot.enabled = !!body.enabled;
             saveBots(bots);
             return json(res, 200, { ok: true, msg: bot.name + (bot.enabled ? ' 已启用' : ' 已禁用') });
-        }
-
-        if (p === '/api/models/probe' && req.method === 'POST') {
-            const body = await readBody(req);
-            const list = Array.isArray(body.models) ? body.models : [];
-            if (!list.length) return json(res, 200, { ok: false, msg: '没有要探测的模型' });
-            const results = await probeModels(body.url, String(body.apiKey || '').trim(), list);
-            const usable = results.filter((r) => r.ok).map((r) => r.model);
-            pushLog('panel', '模型可用性探测：' + usable.length + '/' + results.length + ' 可用');
-            return json(res, 200, { ok: true, usable, results });
         }
 
         if (p === '/api/models' && req.method === 'POST') {

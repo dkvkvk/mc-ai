@@ -167,8 +167,7 @@
                             <span class="model-row">
                                 <input class="input" id="nb-model" list="nb-model-list" value="cline-pass/deepseek-v4.1-flash"
                                        placeholder="直接输入，或点自动获取后从下拉里挑（可打字过滤）" />
-                                <button class="btn btn-sm" id="nb-fetch-models" title="用下面的接口地址和 API Key 拉模型列表">自动获取</button>
-                                <button class="btn btn-sm" id="nb-probe-models" title="挨个发一条 1 token 的请求，测出这一组里真正能用的模型（会消耗极少量额度）">测可用</button>
+                                <button class="btn btn-sm" id="nb-fetch-models" title="用下面的接口地址和 API Key 拉模型列表（Cline 网关取的是套餐内真正可用的那一份）">自动获取</button>
                             </span>
                             <select class="input" id="nb-model-provider" hidden></select>
                             <datalist id="nb-model-list"></datalist>
