@@ -70,7 +70,7 @@ static class SetupProgram
                 DoUninstall(explicitDir ?? InstallDirFromRegistry() ?? DefaultDir, true);
                 return 0;
             }
-            bool ok = DoInstall(explicitDir ?? DefaultDir, true, true, out err);
+            bool ok = DoInstall(NormalizeInstallDir(explicitDir ?? DefaultDir), true, true, out err);
             if (!ok)
             {
                 // 静默模式下没有窗口可看，必须留一份记录（多处尝试，总有一处能写）
@@ -93,6 +93,22 @@ static class SetupProgram
         Application.SetCompatibleTextRenderingDefault(false);
         Application.Run(uninstall ? (Form)new UninstallWindow() : new WizardWindow());
         return 0;
+    }
+
+    // ---------------------------------------------------------------- 安装目录
+    // 用户选的可能只是一个盘或一个父目录（D:\、D:\Tools），这里统一补成
+    // <该位置>\MC-AI-Control —— 安装程序自己建这个文件夹，不用用户先去新建。
+    // 已经指向 MC-AI-Control 本身就不重复套一层。
+    static string NormalizeInstallDir(string input)
+    {
+        string p = (input ?? "").Trim().Trim('"').Trim();
+        if (p.Length == 0) return DefaultDir;
+        try { p = Path.GetFullPath(p); } catch { }
+        p = p.TrimEnd('\\', '/');
+        if (p.Length == 0) return DefaultDir;
+        if (p.Length == 2 && p[1] == ':') return p + "\\" + AppFolder;          // D: 或 D:\
+        if (string.Equals(Path.GetFileName(p), AppFolder, StringComparison.OrdinalIgnoreCase)) return p;
+        return p + "\\" + AppFolder;
     }
 
     // ---------------------------------------------------------------- 安装
@@ -596,7 +612,7 @@ static class SetupProgram
 
         void BuildDir()
         {
-            var l = new Label { Bounds = new Rectangle(24, 10, 300, 20), Text = "安装到：", ForeColor = Fg };
+            var l = new Label { Bounds = new Rectangle(24, 10, 420, 20), Text = "选一个位置（盘或文件夹都行）：", ForeColor = Fg };
             body.Controls.Add(l);
             dirBox.SetBounds(24, 34, 500, 26);
             dirBox.BackColor = Color.FromArgb(0x12, 0x12, 0x12);
@@ -605,27 +621,38 @@ static class SetupProgram
             dirBox.Text = DefaultDir;
             body.Controls.Add(dirBox);
 
+            // 只要你选的是父目录，这里就自动补上 MC-AI-Control 文件夹，不用自己建
+            var hint = new Label { Bounds = new Rectangle(24, 64, 600, 20), ForeColor = Green, Text = "" };
+            body.Controls.Add(hint);
+            EventHandler refresh = (s2, e2) =>
+            {
+                string final = NormalizeInstallDir(dirBox.Text);
+                hint.Text = "将安装到：" + final;
+            };
+            dirBox.TextChanged += refresh;
+            refresh(null, null);
+
             var browse = new Button { Bounds = new Rectangle(532, 33, 100, 28), Text = "浏览..." };
             StyleButton(browse, false);
             browse.Click += (s, e) =>
             {
                 using (var d = new FolderBrowserDialog())
                 {
-                    d.Description = "选择安装位置";
+                    d.Description = "选择安装到哪个盘 / 哪个文件夹（会自动补 MC-AI-Control 子文件夹）";
                     d.SelectedPath = dirBox.Text;
                     if (d.ShowDialog(this) == DialogResult.OK) dirBox.Text = d.SelectedPath;
                 }
             };
             body.Controls.Add(browse);
 
-            menuChk.SetBounds(24, 78, 560, 24); menuChk.Text = "创建开始菜单快捷方式"; menuChk.Checked = true; menuChk.ForeColor = Fg;
-            deskChk.SetBounds(24, 106, 560, 24); deskChk.Text = "创建桌面快捷方式"; deskChk.Checked = true; deskChk.ForeColor = Fg;
+            menuChk.SetBounds(24, 96, 560, 24); menuChk.Text = "创建开始菜单快捷方式"; menuChk.Checked = true; menuChk.ForeColor = Fg;
+            deskChk.SetBounds(24, 124, 560, 24); deskChk.Text = "创建桌面快捷方式"; deskChk.Checked = true; deskChk.ForeColor = Fg;
             body.Controls.Add(menuChk);
             body.Controls.Add(deskChk);
 
             var info = new Label
             {
-                Bounds = new Rectangle(24, 148, 580, 60),
+                Bounds = new Rectangle(24, 162, 580, 60),
                 ForeColor = Dim,
                 Text = "面板运行时的配置、日志和机器人清单都写在这个文件夹里\n（安装目录\\MC-AI-Control-data），不会放到 C 盘的 AppData 或用户目录。\n卸载时这份数据会保留，方便重装后继续用。"
             };
@@ -640,6 +667,9 @@ static class SetupProgram
             title.Text = "正在安装";
             subtitle.Text = "请稍候，正在释放程序文件…";
             back.Visible = false; next.Visible = false; cancel.Visible = false;
+
+            string normalized = NormalizeInstallDir(dirBox.Text);
+            dirBox.Text = normalized;      // 让完成页显示实际安装路径
 
             bar.SetBounds(28, 120, 604, 22);
             bar.Minimum = 0; bar.Maximum = 100; bar.Value = 0;
@@ -659,8 +689,7 @@ static class SetupProgram
             installTimer.Stop();
             bar.Value = 35; status.Text = "正在写入程序文件…"; Application.DoEvents();
 
-            string dir = dirBox.Text.Trim();
-            if (dir.Length == 0) dir = DefaultDir;
+            string dir = NormalizeInstallDir(dirBox.Text);
 
             bool ok = DoInstall(dir, deskChk.Checked, menuChk.Checked, out installErr);
             installOk = ok;
