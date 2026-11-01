@@ -48,11 +48,15 @@ static class SetupProgram
     static int Main(string[] args)
     {
         bool silent = false, uninstall = false;
+        string explicitDir = null;
         foreach (string a in args)
         {
-            string s = a.Trim().ToLowerInvariant();
-            if (s == "/s" || s == "-s" || s == "/silent") silent = true;
-            if (s == "/u" || s == "-u" || s == "/uninstall") uninstall = true;
+            string s = a.Trim();
+            string low = s.ToLowerInvariant();
+            if (low == "/s" || low == "-s" || low == "/silent") silent = true;
+            if (low == "/u" || low == "-u" || low == "/uninstall") uninstall = true;
+            // /D=<目录>：指定安装位置（静默安装时用，也方便脚本化测试）
+            if (low.StartsWith("/d=")) explicitDir = s.Substring(3).Trim('"', ' ');
         }
         // 装好后的 uninstall.exe 也是这份二进制，靠文件名判断身份
         string self = Path.GetFileName(Application.ExecutablePath);
@@ -60,9 +64,29 @@ static class SetupProgram
 
         if (silent)
         {
-            if (uninstall) { DoUninstall(InstallDirFromRegistry() ?? DefaultDir, true); return 0; }
             string err;
-            return DoInstall(DefaultDir, true, true, out err) ? 0 : 1;
+            if (uninstall)
+            {
+                DoUninstall(explicitDir ?? InstallDirFromRegistry() ?? DefaultDir, true);
+                return 0;
+            }
+            bool ok = DoInstall(explicitDir ?? DefaultDir, true, true, out err);
+            if (!ok)
+            {
+                // 静默模式下没有窗口可看，必须留一份记录（多处尝试，总有一处能写）
+                string body = DateTime.Now + "  静默安装失败\n" + err + Environment.NewLine +
+                              (Warnings.Count > 0 ? "告警:\n  " + string.Join("\n  ", Warnings.ToArray()) + Environment.NewLine : "");
+                foreach (string p in new[]
+                {
+                    Path.Combine(Path.GetTempPath(), "MC-AI-Control-setup.log"),
+                    Path.Combine(Path.GetDirectoryName(Application.ExecutablePath) ?? ".", "setup-error.log"),
+                    Path.Combine(explicitDir ?? DefaultDir, "setup-error.log")
+                })
+                {
+                    try { File.WriteAllText(p, body, Encoding.UTF8); break; } catch { }
+                }
+            }
+            return ok ? 0 : 1;
         }
 
         Application.EnableVisualStyles();
@@ -72,46 +96,120 @@ static class SetupProgram
     }
 
     // ---------------------------------------------------------------- 安装
+    static string stage = "";          // 出错时用来指明卡在哪一步
+    static readonly List<string> Warnings = new List<string>();
+
+    // 正常情况用系统目录；MCAI_STARTMENU_DIR / MCAI_DESKTOP_DIR 只在测试或特殊部署时覆盖
+    static string StartMenuDir
+    {
+        get
+        {
+            string o = Environment.GetEnvironmentVariable("MCAI_STARTMENU_DIR");
+            if (!string.IsNullOrEmpty(o)) return o;
+            return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+                @"Microsoft\Windows\Start Menu\Programs");
+        }
+    }
+
+    static string DesktopDir
+    {
+        get
+        {
+            string o = Environment.GetEnvironmentVariable("MCAI_DESKTOP_DIR");
+            if (!string.IsNullOrEmpty(o)) return o;
+            return Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
+        }
+    }
+
+    static void Trace(string s)
+    {
+        try
+        {
+            File.AppendAllText(Path.Combine(Path.GetDirectoryName(Application.ExecutablePath) ?? ".", "setup-trace.log"),
+                DateTime.Now.ToString("HH:mm:ss.fff") + "  " + s + Environment.NewLine, Encoding.UTF8);
+        }
+        catch { }
+    }
+
     static bool DoInstall(string dir, bool desktopShortcut, bool startMenuShortcut, out string err)
     {
         err = null;
+        Warnings.Clear();
         try
         {
+            Trace("enter DoInstall dir=" + dir);
+            stage = "停止正在运行的旧版本";
             KillRunning();
+
+            Trace("stage1 ok");
+            stage = "创建安装目录 " + dir;
             Directory.CreateDirectory(dir);
 
+            Trace("stage2 ok");
+            stage = "释放主程序";
             string exePath = Path.Combine(dir, AppExe);
             ExtractResource(AppExe, exePath);
 
             // 便携 node.exe 一起装进去（构建时带了才会内嵌），目标机就不用另装 Node
             if (HasEmbeddedResource("node.exe"))
+            {
+                stage = "释放 node.exe";
                 ExtractResource("node.exe", Path.Combine(dir, "node.exe"));
+            }
 
             // 卸载程序 = 自己的一份拷贝
+            Trace("stage3 ok");
+            stage = "写入卸载程序";
             string uninstallPath = Path.Combine(dir, "uninstall.exe");
             if (!string.Equals(Application.ExecutablePath, uninstallPath, StringComparison.OrdinalIgnoreCase))
                 File.Copy(Application.ExecutablePath, uninstallPath, true);
 
+            Trace("stage4 ok");
+            // 快捷方式和注册表属于「锦上添花」：失败不该让整个安装失败，
+            // 但一定要记下来，装完能告诉用户哪一步没成。
             if (startMenuShortcut)
             {
-                string sm = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-                    @"Microsoft\Windows\Start Menu\Programs");
-                Directory.CreateDirectory(sm);
-                CreateShortcut(Path.Combine(sm, AppName + ".lnk"), exePath, dir);
+                stage = "创建开始菜单快捷方式";
+                TryStep(stage, delegate
+                {
+                    Directory.CreateDirectory(StartMenuDir);
+                    CreateShortcut(Path.Combine(StartMenuDir, AppName + ".lnk"), exePath, dir);
+                });
             }
             if (desktopShortcut)
             {
-                string desk = Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory);
-                CreateShortcut(Path.Combine(desk, AppName + ".lnk"), exePath, dir);
+                stage = "创建桌面快捷方式";
+                TryStep(stage, delegate
+                {
+                    Directory.CreateDirectory(DesktopDir);
+                    CreateShortcut(Path.Combine(DesktopDir, AppName + ".lnk"), exePath, dir);
+                });
             }
 
-            RegisterUninstall(dir, exePath, uninstallPath);
+            Trace("stage5 ok");
+            stage = "登记卸载信息";
+            TryStep(stage, delegate { RegisterUninstall(dir, exePath, uninstallPath); });
+            Trace("install done");
             return true;
         }
         catch (Exception ex)
         {
-            err = ex.Message;
+            err = "[" + stage + "] " + ex.GetType().Name + ": " + ex.Message;
+            Trace("EXCEPTION " + err);
             return false;
+        }
+    }
+
+    static void TryStep(string what, Action action)
+    {
+        try { action(); }
+        catch (Exception ex)
+        {
+            Exception inner = ex;
+            while (inner.InnerException != null) inner = inner.InnerException;
+            string msg = what + "失败：" + inner.GetType().Name + ": " + inner.Message;
+            Warnings.Add(msg);
+            Trace("WARN " + msg);
         }
     }
 
@@ -120,10 +218,8 @@ static class SetupProgram
         KillRunning();
         try
         {
-            string sm = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-                @"Microsoft\Windows\Start Menu\Programs");
-            SafeDelete(Path.Combine(sm, AppName + ".lnk"));
-            SafeDelete(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory), AppName + ".lnk"));
+            SafeDelete(Path.Combine(StartMenuDir, AppName + ".lnk"));
+            SafeDelete(Path.Combine(DesktopDir, AppName + ".lnk"));
             try { Registry.CurrentUser.DeleteSubKeyTree(UninstallKey, false); } catch { }
 
             // 先删自己以外的文件，再把自己删掉
