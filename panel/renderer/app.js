@@ -32,6 +32,7 @@ const api = {
 };
 
 const state = {
+    modelGroups: [],
     cfg: null,
     status: null,
     logs: [],
@@ -449,25 +450,46 @@ $('nb-fetch-models').addEventListener('click', async () => {
     try {
         const r = await post('/api/models', { url, apiKey: key });
         if (!r.ok) { toast(r.msg || '获取失败', 'err'); return; }
-        // 只往 datalist 里塞候选，不动输入框里已经填好的值（避免把 cline-pass/xxx 这种
-        // 网关特有的别名冲掉——接口的 /models 未必列得全）
+        // 按 provider 分组：接口一次给几百个（还带 ~别名、:batch 版本），全塞进下拉没法用。
+        // 这里默认只放出「当前模型所属的 provider」，其余按需切换；输入框里已填的值永远保留。
+        state.modelGroups = r.groups || [{ provider: '全部', models: r.models }];
+        state.modelAliases = r.aliases || 0;
         const cur = $('nb-model').value.trim();
-        const list = $('nb-model-list');
-        list.innerHTML = '';
-        const seen = new Set();
-        const add = (m) => { if (!m || seen.has(m)) return; seen.add(m);
-            const o = document.createElement('option'); o.value = m; list.appendChild(o); };
-        if (cur) add(cur);
-        for (const m of r.models) add(m);
-        const missing = cur && !r.models.includes(cur);
-        const alias = r.aliases ? '（含 ' + r.aliases + ' 个 cline-pass 别名）' : '';
-        $('nb-model-hint').textContent = '已载入 ' + list.options.length + ' 个候选' + alias + '：在输入框里打字就过滤，点候选即填入';
-        toast('拿到 ' + r.models.length + ' 个模型' + alias + (missing ? '；当前的 ' + cur + ' 接口没列，已保留' : ''), 'ok');
+        const sel = $('nb-model-provider');
+        sel.innerHTML = '';
+        for (const g of state.modelGroups) {
+            const o = document.createElement('option');
+            o.value = g.provider; o.textContent = g.provider + '（' + g.models.length + '）';
+            sel.appendChild(o);
+        }
+        // 默认选中「包含当前模型」的那一组，否则第一组
+        const hit = state.modelGroups.find((g) => g.models.includes(cur));
+        sel.value = (hit || state.modelGroups[0]).provider;
+        sel.hidden = state.modelGroups.length < 2;
+        fillModelList();
+        toast('拿到 ' + r.models.length + ' 个模型，已按 provider 分组（当前看 ' + sel.value + '）', 'ok');
     } finally {
         btn.disabled = false; btn.textContent = '自动获取';
     }
 });
 
+
+// 按选中的 provider 填 datalist（当前输入值始终保留在第一位）
+function fillModelList() {
+    const cur = $('nb-model').value.trim();
+    const g = (state.modelGroups || []).find((x) => x.provider === $('nb-model-provider').value);
+    const models = g ? g.models : (state.modelGroups || []).flatMap((x) => x.models);
+    const list = $('nb-model-list');
+    list.innerHTML = '';
+    const seen = new Set();
+    const add = (m) => { if (!m || seen.has(m)) return; seen.add(m);
+        const o = document.createElement('option'); o.value = m; list.appendChild(o); };
+    if (cur) add(cur);
+    for (const m of models) add(m);
+    const alias = (state.modelAliases && g) ? '（其中 ' + models.filter((m) => m.startsWith('cline-pass/')).length + ' 个 cline-pass 别名）' : '';
+    $('nb-model-hint').textContent = '候选 ' + (list.options.length - (cur ? 1 : 0)) + ' 个' + alias + '：输入框里打字即过滤，点候选即填入';
+}
+$('nb-model-provider').addEventListener('change', fillModelList);
 
 // 添加机器人（添加后立刻启动它）
 $('nb-add').addEventListener('click', async () => {

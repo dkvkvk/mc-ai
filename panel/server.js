@@ -282,20 +282,33 @@ function fetchModels(url, apiKey) {
                 try { json = JSON.parse(buf); } catch { return resolve({ ok: false, msg: '返回的不是 JSON' }); }
                 const list = (json.data || json.models || []).map((m) => (typeof m === 'string' ? m : (m.id || m.name || ''))).filter(Boolean);
                 if (!list.length) return resolve({ ok: false, msg: '接口没有返回模型列表' });
+                // 只留能直接用的 id：~xxx-latest 是滚动别名、xxx:batch 是批处理版本，混在列表里纯噪音
+                const clean = list.filter((id) => !id.startsWith('~') && !id.includes(':') && !id.startsWith('@preset/'));
                 // Cline 网关（api.cline.bot）的 /models 只按 provider/model 列，不列 cline-pass/*。
                 // 那是 Cline 客户端的路由别名，规则就是 cline-pass/<叶子名>：
                 //   默认的 cline-pass/deepseek-v4.1-flash  ↔  接口里的 deepseek/deepseek-v4.1-flash
-                // 所以这里补一份别名，界面上才选得到 cline-pass 的模型。
-                const aliases = [];
-                if (/cline/i.test(base.hostname)) {
-                    for (const id of list) {
-                        if (id.startsWith('@preset/') || id.startsWith('~') || id.includes(':')) continue;  // :batch 之类不是真别名
+                // 所以按叶子名补一份别名，并归到它来源的那个 provider 分组里。
+                const isCline = /cline/i.test(base.hostname);
+                const groups = new Map();
+                let aliasCount = 0;
+                for (const id of clean) {
+                    const provider = id.includes('/') ? id.split('/')[0] : '其它';
+                    if (!groups.has(provider)) groups.set(provider, []);
+                    groups.get(provider).push(id);
+                    if (isCline) {
                         const leaf = id.split('/').pop();
-                        if (leaf && !list.includes('cline-pass/' + leaf)) aliases.push('cline-pass/' + leaf);
+                        const alias = 'cline-pass/' + leaf;
+                        if (leaf && !clean.includes(alias) && !groups.get(provider).includes(alias)) {
+                            groups.get(provider).push(alias);
+                            aliasCount++;
+                        }
                     }
                 }
-                const all = [...new Set(list.concat(aliases))].sort();
-                resolve({ ok: true, models: all, aliases: aliases.length });
+                const groupList = [...groups.entries()]
+                    .map(([provider, models]) => ({ provider, models: [...new Set(models)].sort() }))
+                    .sort((a, b) => b.models.length - a.models.length);
+                const all = [...new Set(groupList.flatMap((g) => g.models))].sort();
+                resolve({ ok: true, models: all, groups: groupList, aliases: aliasCount });
             });
         });
         req.on('timeout', () => { req.destroy(new Error('超时 15s')); });
