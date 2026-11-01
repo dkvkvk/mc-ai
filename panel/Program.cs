@@ -91,6 +91,60 @@ static class Program
     // 本次自己拉起的后端（窗口没开成时不能留一个看不见的进程占着端口）
     static Process StartedBackend;
 
+    // WebView2 的三个二进制都内嵌在 exe 里：分发时只有 MC-AI-Control.exe 一个文件。
+    // 托管程序集靠 AssemblyResolve 从资源里直接加载；原生 loader 必须落到磁盘上，
+    // 由 CoreWebView2Environment.SetLoaderDllFolderPath 指过去。
+    static Assembly ResolveEmbeddedAssembly(object sender, ResolveEventArgs args)
+    {
+        string name;
+        try { name = new AssemblyName(args.Name).Name; } catch { return null; }
+        string res = name == "Microsoft.Web.WebView2.Core" ? "wv2.core"
+                   : name == "Microsoft.Web.WebView2.WinForms" ? "wv2.winforms"
+                   : null;
+        if (res == null) return null;
+        using (Stream s = typeof(Program).Assembly.GetManifestResourceStream(res))
+        {
+            if (s == null) return null;
+            var buf = new byte[s.Length];
+            int read = 0;
+            while (read < buf.Length)
+            {
+                int n = s.Read(buf, read, buf.Length - read);
+                if (n <= 0) break;
+                read += n;
+            }
+            return Assembly.Load(buf);
+        }
+    }
+
+    static void PrepareWebView2Loader()
+    {
+        try
+        {
+            string dir = Path.Combine(DataDir, "webview2");
+            Directory.CreateDirectory(dir);
+            string dll = Path.Combine(dir, "WebView2Loader.dll");
+            using (Stream s = typeof(Program).Assembly.GetManifestResourceStream("wv2.loader"))
+            {
+                if (s != null)
+                {
+                    // 每次都重写（资源可能随版本变），写入失败就沿用旧文件
+                    try
+                    {
+                        using (var fs = new FileStream(dll, FileMode.Create, FileAccess.Write, FileShare.Read))
+                            s.CopyTo(fs);
+                    }
+                    catch (Exception ex) { Log("释放 WebView2Loader 失败（继续尝试已有文件）: " + ex.Message); }
+                }
+            }
+            if (File.Exists(dll)) CoreWebView2Environment.SetLoaderDllFolderPath(dir);
+        }
+        catch (Exception ex)
+        {
+            Log("准备 WebView2 loader 失败: " + ex.Message);
+        }
+    }
+
     static void Fatal(string title, string detail)
     {
         Log("错误: " + detail.Replace(Environment.NewLine, " | "));
@@ -119,6 +173,10 @@ static class Program
 
         try
         {
+            // 必须在碰到任何 WebView2 类型之前装好解析器
+            AppDomain.CurrentDomain.AssemblyResolve += ResolveEmbeddedAssembly;
+            PrepareWebView2Loader();
+
             Log("======== 启动 ========");
             Log("exe: " + Application.ExecutablePath);
 

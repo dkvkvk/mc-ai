@@ -67,6 +67,10 @@ $cscArgs = @(
     '/resource:renderer\styles.css,styles.css',
     '/resource:renderer\app.js,app.js',
     '/resource:README.txt,README.txt',
+    # WebView2 binaries are embedded too, so the shipped artifact is a single exe
+    "/resource:$coreDll,wv2.core",
+    "/resource:$wfDll,wv2.winforms",
+    "/resource:$loaderDll,wv2.loader",
     'Program.cs',
     'AssemblyInfo.cs'
 )
@@ -74,12 +78,9 @@ $cscArgs = @(
 & $csc @cscArgs
 if ($LASTEXITCODE -ne 0) { throw "compile failed, exit code $LASTEXITCODE" }
 
-# WebView2 SDK is referenced at compile time, but the CLR needs the assemblies next to the exe at runtime.
-Copy-Item $coreDll 'dist\Microsoft.Web.WebView2.Core.dll' -Force
-Copy-Item $wfDll 'dist\Microsoft.Web.WebView2.WinForms.dll' -Force
-
-# WebView2Loader.dll must sit next to the exe and match the process bitness (x64 here)
-Copy-Item $loaderDll 'dist\WebView2Loader.dll' -Force
+# WebView2 SDK assemblies + native loader are embedded as resources (see Program.cs),
+# so nothing else has to sit next to MC-AI-Control.exe.
+Remove-Item 'dist\WebView2Loader.dll','dist\Microsoft.Web.WebView2.Core.dll','dist\Microsoft.Web.WebView2.WinForms.dll' -ErrorAction SilentlyContinue
 
 # Ship node.exe too, so the target machine does not need a separate Node install.
 $nodeSrc = (Get-Command node -ErrorAction SilentlyContinue).Source
@@ -93,4 +94,4 @@ if ($nodeSrc -and (Test-Path $nodeSrc)) {
 $exe = Get-Item 'dist\MC-AI-Control.exe'
 Write-Host ("BUILD OK: {0}  ({1:N0} KB)" -f $exe.FullName, ($exe.Length / 1KB))
 Write-Host ("   SHA256: {0}" -f (Get-FileHash $exe.FullName -Algorithm SHA256).Hash)
-Write-Host '   dist: MC-AI-Control.exe + WebView2Loader.dll (+ node.exe)'
+Write-Host '   dist: MC-AI-Control.exe (single file, + optional node.exe for portability)'
