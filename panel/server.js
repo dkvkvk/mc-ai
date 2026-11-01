@@ -259,6 +259,17 @@ function applyBotKey(bot) {
     }
 }
 
+// 这个机器人用的 key 到底有没有：先看界面上填的，再看 mindcraft/keys.json，最后看环境变量
+function botKeyState(bot) {
+    const name = keyNameOf(bot.api);
+    if (bot.apiKey) return { ok: true, name, from: 'panel' };
+    let keys = {};
+    try { keys = JSON.parse(fs.readFileSync(path.join(cfg.mindcraftDir, 'keys.json'), 'utf8')) || {}; } catch { keys = {}; }
+    if (keys[name]) return { ok: true, name, from: 'keys.json' };
+    if (process.env[name]) return { ok: true, name, from: 'env' };
+    return { ok: false, name, from: '' };
+}
+
 // 拉取 OpenAI 兼容接口的模型列表（GET <url>/models）
 function fetchModels(url, apiKey) {
     return new Promise((resolve) => {
@@ -572,6 +583,12 @@ async function startBotOne(name) {
     }
 
     if (bot.apiKey) applyBotKey(bot);
+
+    // key 没配就别让它带着一串看不懂的报错进服
+    const ks = botKeyState(bot);
+    if (!ks.ok) {
+        return { ok: false, msg: '还没填 ' + ks.name + '：在这个机器人下面的「API Key」里填一次（会写进 mindcraft/keys.json），或在 mindcraft/keys.json 里补上 ' + ks.name };
+    }
 
     const exist = agentsCache.find((a) => a.name === name);
     if (exist) {
