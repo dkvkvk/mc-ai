@@ -460,7 +460,9 @@ $('nb-fetch-models').addEventListener('click', async () => {
         if (cur) add(cur);
         for (const m of r.models) add(m);
         const missing = cur && !r.models.includes(cur);
-        toast('接口给了 ' + r.models.length + ' 个模型' + (missing ? '（不含当前的 ' + cur + '，已保留输入框的值）' : '') + '，输入框里打字可过滤', 'ok');
+        const alias = r.aliases ? '（含 ' + r.aliases + ' 个 cline-pass 别名）' : '';
+        $('nb-model-hint').textContent = '已载入 ' + list.options.length + ' 个候选' + alias + '：在输入框里打字就过滤，点候选即填入';
+        toast('拿到 ' + r.models.length + ' 个模型' + alias + (missing ? '；当前的 ' + cur + ' 接口没列，已保留' : ''), 'ok');
     } finally {
         btn.disabled = false; btn.textContent = '自动获取';
     }

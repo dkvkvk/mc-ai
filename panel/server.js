@@ -282,7 +282,20 @@ function fetchModels(url, apiKey) {
                 try { json = JSON.parse(buf); } catch { return resolve({ ok: false, msg: '返回的不是 JSON' }); }
                 const list = (json.data || json.models || []).map((m) => (typeof m === 'string' ? m : (m.id || m.name || ''))).filter(Boolean);
                 if (!list.length) return resolve({ ok: false, msg: '接口没有返回模型列表' });
-                resolve({ ok: true, models: list.sort() });
+                // Cline 网关（api.cline.bot）的 /models 只按 provider/model 列，不列 cline-pass/*。
+                // 那是 Cline 客户端的路由别名，规则就是 cline-pass/<叶子名>：
+                //   默认的 cline-pass/deepseek-v4.1-flash  ↔  接口里的 deepseek/deepseek-v4.1-flash
+                // 所以这里补一份别名，界面上才选得到 cline-pass 的模型。
+                const aliases = [];
+                if (/cline/i.test(base.hostname)) {
+                    for (const id of list) {
+                        if (id.startsWith('@preset/') || id.startsWith('~') || id.includes(':')) continue;  // :batch 之类不是真别名
+                        const leaf = id.split('/').pop();
+                        if (leaf && !list.includes('cline-pass/' + leaf)) aliases.push('cline-pass/' + leaf);
+                    }
+                }
+                const all = [...new Set(list.concat(aliases))].sort();
+                resolve({ ok: true, models: all, aliases: aliases.length });
             });
         });
         req.on('timeout', () => { req.destroy(new Error('超时 15s')); });
