@@ -41,8 +41,8 @@ jobs:
 
       - name: Verify artifacts
         run: |
-          $exe   = 'panel/dist/MC-AI-Control.exe'
-          $setup = 'panel/dist/MC-AI-Control-Setup.exe'
+          $exe   = 'panel/dist/Craftmind.exe'
+          $setup = 'panel/dist/Craftmind-Setup.exe'
           foreach ($f in @($exe, $setup)) {
             if (-not (Test-Path $f)) { throw "missing $f" }
             $i = Get-Item $f
@@ -60,39 +60,39 @@ jobs:
       - name: Package
         run: |
           New-Item -ItemType Directory -Force -Path out | Out-Null
-          Copy-Item 'panel/dist/MC-AI-Control-Setup.exe' out/
+          Copy-Item 'panel/dist/Craftmind-Setup.exe' out/
 
           $portable = 'out/portable'
           New-Item -ItemType Directory -Force -Path $portable | Out-Null
-          Copy-Item 'panel/dist/MC-AI-Control.exe' $portable/
+          Copy-Item 'panel/dist/Craftmind.exe' $portable/
           if (Test-Path 'panel/dist/node.exe') { Copy-Item 'panel/dist/node.exe' $portable/ }
           Copy-Item 'panel/README.txt' (Join-Path $portable '使用说明.txt')
 
           $readme = @(
-            'MC-AI-Control 便携版',
+            'Craftmind 便携版',
             '====================',
             '',
-            '双击 MC-AI-Control.exe 即可运行，不需要安装。',
+            '双击 Craftmind.exe 即可运行，不需要安装。',
             '',
             '- 本目录自带的 node.exe 会被优先使用；删掉它则回退到系统 PATH 里的 Node.js',
-            '- 配置/日志在：本目录\MC-AI-Control-data（便携模式，跟着目录走）',
-            '- 想装进系统（开始菜单 + 卸载项）：运行 MC-AI-Control-Setup.exe'
+            '- 配置/日志在：本目录\Craftmind-data（便携模式，跟着目录走）',
+            '- 想装进系统（开始菜单 + 卸载项）：运行 Craftmind-Setup.exe'
           )
           $readme -join "`r`n" | Out-File -FilePath (Join-Path $portable '便携版说明.txt') -Encoding utf8
 
-          Compress-Archive -Path "$portable/*" -DestinationPath 'out/MC-AI-Control-portable.zip' -Force
+          Compress-Archive -Path "$portable/*" -DestinationPath 'out/Craftmind-portable.zip' -Force
           Get-ChildItem out -Recurse -File | Select-Object Name, Length | Format-Table -AutoSize
 
       - name: Upload installer
         uses: actions/upload-artifact@v4
         with:
-          name: MC-AI-Control-Setup
-          path: out/MC-AI-Control-Setup.exe
+          name: Craftmind-Setup
+          path: out/Craftmind-Setup.exe
           if-no-files-found: error
 
       - name: Upload portable
         uses: actions/upload-artifact@v4
         with:
-          name: MC-AI-Control-portable
-          path: out/MC-AI-Control-portable.zip
+          name: Craftmind-portable
+          path: out/Craftmind-portable.zip
           if-no-files-found: error

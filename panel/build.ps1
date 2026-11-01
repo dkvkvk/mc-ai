@@ -54,7 +54,7 @@ if (-not (Test-Path 'icon.ico')) { throw 'icon.ico missing (generate it with mki
 
 # ---------------------------------------------------------------- compile
 New-Item -ItemType Directory -Force -Path 'dist' | Out-Null
-Remove-Item 'dist\MC-AI-Control.exe' -ErrorAction SilentlyContinue
+Remove-Item 'dist\Craftmind.exe' -ErrorAction SilentlyContinue
 
 $cscArgs = @(
     '/nologo',
@@ -63,7 +63,7 @@ $cscArgs = @(
     '/optimize+',
     '/codepage:65001',
     '/win32icon:icon.ico',
-    '/out:dist\MC-AI-Control.exe',
+    '/out:dist\Craftmind.exe',
     '/r:System.Windows.Forms.dll',
     '/r:System.Drawing.dll',
     "/r:$coreDll",
@@ -85,7 +85,7 @@ $cscArgs = @(
 if ($LASTEXITCODE -ne 0) { throw "compile failed, exit code $LASTEXITCODE" }
 
 # WebView2 SDK assemblies + native loader are embedded as resources (see Program.cs),
-# so nothing else has to sit next to MC-AI-Control.exe.
+# so nothing else has to sit next to Craftmind.exe.
 Remove-Item 'dist\WebView2Loader.dll','dist\Microsoft.Web.WebView2.Core.dll','dist\Microsoft.Web.WebView2.WinForms.dll' -ErrorAction SilentlyContinue
 
 # Ship node.exe only when asked: it is 90+ MB and CI artifacts are meant to be self-sufficient.
@@ -102,10 +102,10 @@ if ($BundleNode) {
     Write-Host '   (portable node.exe not bundled; pass -BundleNode to include it)'
 }
 
-$exe = Get-Item 'dist\MC-AI-Control.exe'
+$exe = Get-Item 'dist\Craftmind.exe'
 Write-Host ("BUILD OK: {0}  ({1:N0} KB)" -f $exe.FullName, ($exe.Length / 1KB))
 Write-Host ("   SHA256: {0}" -f (Get-FileHash $exe.FullName -Algorithm SHA256).Hash)
-Write-Host '   dist: MC-AI-Control.exe (single file, + optional node.exe for portability)'
+Write-Host '   dist: Craftmind.exe (single file, + optional node.exe for portability)'
 
 # ---------------------------------------------------------------- installer
 # The setup wizard embeds the app exe, so it has to be built afterwards.
@@ -120,7 +120,7 @@ if (Test-Path 'installer.cs') {
         Write-Host ("   uninstaller: {0:N0} KB" -f ($u.Length / 1KB))
     }
 
-    Remove-Item 'dist\MC-AI-Control-Setup.exe' -ErrorAction SilentlyContinue
+    Remove-Item 'dist\Craftmind-Setup.exe' -ErrorAction SilentlyContinue
     $setupArgs = @(
         '/nologo',
         '/target:winexe',
@@ -128,10 +128,10 @@ if (Test-Path 'installer.cs') {
         '/optimize+',
         '/codepage:65001',
         '/win32icon:icon.ico',
-        '/out:dist\MC-AI-Control-Setup.exe',
+        '/out:dist\Craftmind-Setup.exe',
         '/r:System.Windows.Forms.dll',
         '/r:System.Drawing.dll',
-        '/resource:dist\MC-AI-Control.exe,MC-AI-Control.exe'
+        '/resource:dist\Craftmind.exe,Craftmind.exe'
     )
     # Bundle node.exe into the installer when the portable build has it, so the
     # installed app does not depend on a separate Node.js installation.
@@ -146,7 +146,7 @@ if (Test-Path 'installer.cs') {
     $setupArgs += 'installer.asm.cs'
     & $csc @setupArgs
     if ($LASTEXITCODE -ne 0) { throw "installer compile failed, exit code $LASTEXITCODE" }
-    $setup = Get-Item 'dist\MC-AI-Control-Setup.exe'
+    $setup = Get-Item 'dist\Craftmind-Setup.exe'
     Write-Host ("SETUP OK: {0}  ({1:N0} KB)" -f $setup.FullName, ($setup.Length / 1KB))
     Write-Host ("   SHA256: {0}" -f (Get-FileHash $setup.FullName -Algorithm SHA256).Hash)
 }

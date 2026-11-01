@@ -1,11 +1,11 @@
-Minecraft AI 控制面板
+Craftmind
 =====================
 
 一个把「Minecraft 服务端 + AI 机器人（mindcraft）」管起来的中文侧边栏面板。
 像素风界面，参考了 GitHub 上的 MC 风格前端（aubergine-ux/MC-Website-Template、
 katorlys/OreUI）的做法：0 圆角 + 硬边框 + 内嵌高光做方块立体感。
 
-这是一个真正的桌面程序：窗口由 MC-AI-Control.exe 自己创建（WinForms + WebView2，
+这是一个真正的桌面程序：窗口由 Craftmind.exe 自己创建（WinForms + WebView2，
 Edge 内核嵌在程序里），有自己的图标、标题栏和任务栏项，没有地址栏、没有标签页。
 
 用法
@@ -13,12 +13,12 @@ Edge 内核嵌在程序里），有自己的图标、标题栏和任务栏项，
 两种装法，任选其一：
 
 A. 安装包（推荐）
-   双击 MC-AI-Control-Setup.exe → 欢迎 → 接受许可协议 → 选安装位置 → 安装 → 完成。
-   装完在开始菜单（和桌面）会有快捷方式，卸载去「设置 → 应用」搜「Minecraft AI」。
-   默认装到 %LOCALAPPDATA%\Programs\MC-AI-Control，不需要管理员权限。
+   双击 Craftmind-Setup.exe → 欢迎 → 接受许可协议 → 选安装位置 → 安装 → 完成。
+   装完在开始菜单（和桌面）会有快捷方式，卸载去「设置 → 应用」搜「Craftmind」。
+   默认装到 %LOCALAPPDATA%\Programs\Craftmind，不需要管理员权限。
 
 B. 便携版
-   解压后直接双击 MC-AI-Control.exe，配置写在同目录的 MC-AI-Control-data 里。
+   解压后直接双击 Craftmind.exe，配置写在同目录的 Craftmind-data 里。
 
 打开后：
 1. 独立窗口打开面板（不是浏览器标签页）
@@ -55,11 +55,11 @@ B. 便携版
 
 文件都在哪
 ----------
-数据目录就在安装目录里（<程序所在目录>\MC-AI-Control-data），不写 C 盘的
+数据目录就在安装目录里（<程序所在目录>\Craftmind-data），不写 C 盘的
 AppData / 用户目录；装到哪个盘，数据和程序就在一起，卸载时这份数据会保留。
 万一安装目录不可写（比如装进 Program Files），才按顺序退：
-  1. %LOCALAPPDATA%\MC-AI-Control
-  2. %TEMP%\MC-AI-Control
+  1. %LOCALAPPDATA%\Craftmind
+  2. %TEMP%\Craftmind
 
 - 程序解压目录：<数据目录>\app
 - 面板配置：    <数据目录>\app\data\config.json
@@ -80,7 +80,7 @@ AppData / 用户目录；装到哪个盘，数据和程序就在一起，卸载�
 打不开怎么办
 ------------
 1. 双击后先等 5~15 秒（要拉起 node.js 后端），别急着重复点
-2. 命令行运行 `MC-AI-Control.exe --doctor`，会生成 doctor.txt 并打开，
+2. 命令行运行 `Craftmind.exe --doctor`，会生成 doctor.txt 并打开，
    里面写着 node / WebView2 / Edge / 端口 / 三处目录可写性 / 已装文件时间戳
 3. 看 launcher.log 最后几行，出错原因都写在那
 

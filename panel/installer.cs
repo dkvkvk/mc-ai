@@ -1,9 +1,9 @@
 // ---------------------------------------------------------------------------
-//  Minecraft AI 控制面板 —— 安装程序（csc 编译，不依赖 Inno/NSIS）
+//  Craftmind —— 安装程序（csc 编译，不依赖 Inno/NSIS）
 //
 //  为什么自己写：这台机器上没有 Inno Setup / NSIS，也不想去装（要管理员权限）。
-//  安装包本身就把 MC-AI-Control.exe 内嵌在资源里，装的时候释放到
-//  %LOCALAPPDATA%\Programs\MC-AI-Control，**全程不需要管理员权限**。
+//  安装包本身就把 Craftmind.exe 内嵌在资源里，装的时候释放到
+//  %LOCALAPPDATA%\Programs\Craftmind，**全程不需要管理员权限**。
 //
 //  向导：欢迎 → 许可协议（必须接受）→ 安装位置 → 安装中 → 完成
 //  附加：开始菜单/桌面快捷方式、控制面板「程序和功能」里的卸载项、uninstall.exe
@@ -25,10 +25,10 @@ using Microsoft.Win32;
 
 static class SetupProgram
 {
-    const string AppName = "Minecraft AI 控制面板";
-    const string AppFolder = "MC-AI-Control";
-    const string AppExe = "MC-AI-Control.exe";
-    const string UninstallKey = @"Software\Microsoft\Windows\CurrentVersion\Uninstall\MC-AI-Control";
+    const string AppName = "Craftmind";
+    const string AppFolder = "Craftmind";
+    const string AppExe = "Craftmind.exe";
+    const string UninstallKey = @"Software\Microsoft\Windows\CurrentVersion\Uninstall\Craftmind";
     const string AppVersion = "1.2.0";
     const string Publisher = "dkvkvk";
 
@@ -78,7 +78,7 @@ static class SetupProgram
                               (Warnings.Count > 0 ? "告警:\n  " + string.Join("\n  ", Warnings.ToArray()) + Environment.NewLine : "");
                 foreach (string p in new[]
                 {
-                    Path.Combine(Path.GetTempPath(), "MC-AI-Control-setup.log"),
+                    Path.Combine(Path.GetTempPath(), "Craftmind-setup.log"),
                     Path.Combine(Path.GetDirectoryName(Application.ExecutablePath) ?? ".", "setup-error.log"),
                     Path.Combine(explicitDir ?? DefaultDir, "setup-error.log")
                 })
@@ -97,8 +97,8 @@ static class SetupProgram
 
     // ---------------------------------------------------------------- 安装目录
     // 用户选的可能只是一个盘或一个父目录（D:\、D:\Tools），这里统一补成
-    // <该位置>\MC-AI-Control —— 安装程序自己建这个文件夹，不用用户先去新建。
-    // 已经指向 MC-AI-Control 本身就不重复套一层。
+    // <该位置>\Craftmind —— 安装程序自己建这个文件夹，不用用户先去新建。
+    // 已经指向 Craftmind 本身就不重复套一层。
     static string NormalizeInstallDir(string input)
     {
         string p = (input ?? "").Trim().Trim('"').Trim();
@@ -247,9 +247,9 @@ static class SetupProgram
             SafeDelete(Path.Combine(DesktopDir, AppName + ".lnk"));
             try { Registry.CurrentUser.DeleteSubKeyTree(UninstallKey, false); } catch { }
 
-            // 数据目录（安装目录\MC-AI-Control-data）整份保留，理由同 uninstaller.cs：
+            // 数据目录（安装目录\Craftmind-data）整份保留，理由同 uninstaller.cs：
             // 卸载一般是重装/换版本，不该顺手删掉用户配好的机器人清单和 API Key。
-            string keep = Path.Combine(dir, "MC-AI-Control-data");
+            string keep = Path.Combine(dir, "Craftmind-data");
             string self = Application.ExecutablePath;
             if (Directory.Exists(dir))
             {
@@ -388,7 +388,7 @@ static class SetupProgram
 
     // ---------------------------------------------------------------- 许可协议
     const string EulaText =
-@"Minecraft AI 控制面板 —— 最终用户许可协议
+@"Craftmind —— 最终用户许可协议
 
 1. 授权范围
    本软件免费提供，可自由安装、使用、复制与分发。你可以把它装在自己的电脑上，
@@ -621,7 +621,7 @@ static class SetupProgram
             dirBox.Text = DefaultDir;
             body.Controls.Add(dirBox);
 
-            // 只要你选的是父目录，这里就自动补上 MC-AI-Control 文件夹，不用自己建
+            // 只要你选的是父目录，这里就自动补上 Craftmind 文件夹，不用自己建
             var hint = new Label { Bounds = new Rectangle(24, 64, 600, 20), ForeColor = Green, Text = "" };
             body.Controls.Add(hint);
             EventHandler refresh = (s2, e2) =>
@@ -638,7 +638,7 @@ static class SetupProgram
             {
                 using (var d = new FolderBrowserDialog())
                 {
-                    d.Description = "选择安装到哪个盘 / 哪个文件夹（会自动补 MC-AI-Control 子文件夹）";
+                    d.Description = "选择安装到哪个盘 / 哪个文件夹（会自动补 Craftmind 子文件夹）";
                     d.SelectedPath = dirBox.Text;
                     if (d.ShowDialog(this) == DialogResult.OK) dirBox.Text = d.SelectedPath;
                 }
@@ -654,7 +654,7 @@ static class SetupProgram
             {
                 Bounds = new Rectangle(24, 162, 580, 60),
                 ForeColor = Dim,
-                Text = "面板运行时的配置、日志和机器人清单都写在这个文件夹里\n（安装目录\\MC-AI-Control-data），不会放到 C 盘的 AppData 或用户目录。\n卸载时这份数据会保留，方便重装后继续用。"
+                Text = "面板运行时的配置、日志和机器人清单都写在这个文件夹里\n（安装目录\\Craftmind-data），不会放到 C 盘的 AppData 或用户目录。\n卸载时这份数据会保留，方便重装后继续用。"
             };
             body.Controls.Add(info);
         }
@@ -717,7 +717,7 @@ static class SetupProgram
                 ForeColor = Fg,
                 Text = AppName + " " + AppVersion + " 已安装到：\n" + dirBox.Text.Trim() +
                        "\n\n可以在开始菜单" + (deskChk.Checked ? "或桌面" : "") + "找到它。\n" +
-                       "卸载：打开「设置 → 应用」搜索「Minecraft AI」。"
+                       "卸载：打开「设置 → 应用」搜索「Craftmind」。"
             };
             body.Controls.Add(l);
 

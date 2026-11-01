@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------
-//  Minecraft AI 控制面板 —— 桌面启动器（WinForms + WebView2）
+//  Craftmind —— 桌面启动器（WinForms + WebView2）
 //
 //  历史：最早用 Electron 套壳，但这台机器上 electron.exe 一启动就 STATUS_BREAKPOINT，
 //        而 Chromium 本身正常 —— 所以改成「系统浏览器当壳」的临时方案（Edge --app）。
@@ -26,7 +26,7 @@ using Microsoft.Web.WebView2.WinForms;
 
 static class Program
 {
-    // 数据目录**就在安装目录里**（<exe 所在目录>\MC-AI-Control-data）：
+    // 数据目录**就在安装目录里**（<exe 所在目录>\Craftmind-data）：
     // 用户明确要求过，安装版不许把配置/日志/cookie 写到 C 盘的 AppData 或用户目录，
     // 装到哪个盘就都留在那个盘，卸载时也好找。
     // 只有当安装目录本身不可写（例如装进 Program Files）时，才退到 %LOCALAPPDATA%；
@@ -36,11 +36,56 @@ static class Program
     static readonly string BrowserDir = Path.Combine(DataDir, "browser");
     static readonly string RendererDir = Path.Combine(AppDir, "renderer");
 
+    static string PendingLog;   // ResolveDataDir 期间还没法写日志，先攒着
+
+    // 改名前的数据目录：装机量不大，直接把旧目录整份搬过来，省得用户重新配一遍路径/机器人
+    // 注意：必须在这里现造数组。写成静态字段的话，它会在 DataDir 之后才初始化，
+    // 而 DataDir 的初始化过程就要读它 → 拿到 null → TypeInitializationException（整个程序静默退出）。
+    static string[] LegacyDataDirs()
+    {
+        return new string[]
+        {
+            Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "MC-AI-Control-data"),
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Programs", "MC-AI-Control", "MC-AI-Control-data"),
+        };
+    }
+
+    static void MigrateLegacyData(string target)
+    {
+        if (Directory.Exists(target) && Directory.GetFileSystemEntries(target).Length > 0) return;
+        foreach (string old in LegacyDataDirs())
+        {
+            try
+            {
+                if (!Directory.Exists(old)) continue;
+                if (Directory.GetFileSystemEntries(old).Length == 0) continue;
+                Directory.CreateDirectory(target);
+                foreach (string src in Directory.GetFileSystemEntries(old))
+                {
+                    string dst = Path.Combine(target, Path.GetFileName(src));
+                    if (Directory.Exists(src)) { if (!Directory.Exists(dst)) CopyDir(src, dst); }
+                    else if (!File.Exists(dst)) File.Copy(src, dst, true);
+                }
+                PendingLog = "旧数据目录已迁移：" + old + " → " + target;
+                return;
+            }
+            catch (Exception e) { PendingLog = "旧数据目录迁移失败（不影响启动）：" + e.Message; }
+        }
+    }
+
+    static void CopyDir(string src, string dst)
+    {
+        Directory.CreateDirectory(dst);
+        foreach (string f in Directory.GetFiles(src)) File.Copy(f, Path.Combine(dst, Path.GetFileName(f)), true);
+        foreach (string d in Directory.GetDirectories(src)) CopyDir(d, Path.Combine(dst, Path.GetFileName(d)));
+    }
+
     static string ResolveDataDir()
     {
-        string portable = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "MC-AI-Control-data");
-        string local = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "MC-AI-Control");
-        string temp = Path.Combine(Path.GetTempPath(), "MC-AI-Control");
+        string portable = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Craftmind-data");
+        string local = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Craftmind");
+        string temp = Path.Combine(Path.GetTempPath(), "Craftmind");
+        MigrateLegacyData(portable);
         foreach (string c in new[] { portable, local, temp })
         {
             try
@@ -70,7 +115,7 @@ static class Program
     // 只写一处是很危险的：那处不可写时，用户双击后什么都不会发生，现场一点线索都不留。
     static readonly string LogFileData = Path.Combine(DataDir, "launcher.log");
     static readonly string LogFileExe = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "launcher.log");
-    static readonly string LogFileTmp = Path.Combine(Path.GetTempPath(), "MC-AI-Control-launcher.log");
+    static readonly string LogFileTmp = Path.Combine(Path.GetTempPath(), "Craftmind-launcher.log");
     static string ActiveLog;
 
     static void Log(string msg)    {
@@ -92,7 +137,7 @@ static class Program
     // 本次自己拉起的后端（窗口没开成时不能留一个看不见的进程占着端口）
     static Process StartedBackend;
 
-    // WebView2 的三个二进制都内嵌在 exe 里：分发时只有 MC-AI-Control.exe 一个文件。
+    // WebView2 的三个二进制都内嵌在 exe 里：分发时只有 Craftmind.exe 一个文件。
     // 托管程序集靠 AssemblyResolve 从资源里直接加载；原生 loader 必须落到磁盘上，
     // 由 CoreWebView2Environment.SetLoaderDllFolderPath 指过去。
     static Assembly ResolveEmbeddedAssembly(object sender, ResolveEventArgs args)
@@ -166,6 +211,8 @@ static class Program
     [STAThread]
     static void Main(string[] args)
     {
+        if (!string.IsNullOrEmpty(PendingLog)) { Log(PendingLog); PendingLog = null; }
+
         if (args.Length > 0 && (args[0] == "--doctor" || args[0] == "-d"))
         {
             RunDoctor();
@@ -189,7 +236,7 @@ static class Program
             }
             catch (Exception ex)
             {
-                Fatal("Minecraft AI 控制面板",
+                Fatal("Craftmind",
                     "无法创建数据目录：\n" + DataDir + "\n\n" + ex.Message +
                     "\n\n常见原因：目录被安全软件锁住，或该路径没有写权限。\n" +
                     "可以手动删除这个目录后重试，或者把面板放到别的磁盘。");
@@ -203,7 +250,7 @@ static class Program
             {
                 // 资源没写进去 = 跑的是旧后端，症状会莫名其妙（比如改了的行为不生效）。
                 // 这必须让用户看见，不能吞掉。
-                Fatal("Minecraft AI 控制面板",
+                Fatal("Craftmind",
                     "面板文件没能写入：\n" + string.Join("\n", failed.ToArray()) +
                     "\n\n通常是安全软件拦截了对这个目录的写入。\n" +
                     "请把 " + DataDir + " 加入杀软白名单，然后删除该目录重试。");
@@ -221,7 +268,7 @@ static class Program
                 Log("node.exe: " + (node ?? "(未找到)"));
                 if (node == null)
                 {
-                    Fatal("Minecraft AI 控制面板",
+                    Fatal("Craftmind",
                         "没有找到 node.exe。\n\n请先安装 Node.js（https://nodejs.org），\n" +
                         "或把 node.exe 的完整路径写进：\n" + Path.Combine(DataDir, "node.txt"));
                     return;
@@ -231,7 +278,7 @@ static class Program
                 Log("后端端口: " + port);
                 if (port == 0)
                 {
-                    Fatal("Minecraft AI 控制面板",
+                    Fatal("Craftmind",
                         "后端启动失败（端口无响应）。\n\n可手动排查：\n  cd \"" + AppDir + "\"\n  \"" + node + "\" server.js");
                     return;
                 }
@@ -243,7 +290,7 @@ static class Program
         }
         catch (Exception ex)
         {
-            Fatal("Minecraft AI 控制面板", "启动出错：" + ex.Message + "\n\n" + ex.GetType().Name);
+            Fatal("Craftmind", "启动出错：" + ex.Message + "\n\n" + ex.GetType().Name);
         }
     }
 
@@ -261,7 +308,7 @@ static class Program
             this.port = port;
             this.backend = backend;
 
-            Text = "Minecraft AI 控制面板";
+            Text = "Craftmind — Minecraft AI Console";
             BackColor = Color.FromArgb(0x12, 0x12, 0x12);
             StartPosition = FormStartPosition.CenterScreen;
             MinimumSize = new Size(980, 660);
@@ -366,11 +413,11 @@ static class Program
     }
 
     // ---------------------------------------------------------------- 自检
-    // 双击没反应时用得上：MC-AI-Control.exe --doctor
+    // 双击没反应时用得上：Craftmind.exe --doctor
     static void RunDoctor()
     {
         var sb = new StringBuilder();
-        sb.AppendLine("MC-AI-Control 自检  " + DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"));
+        sb.AppendLine("Craftmind 自检  " + DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss"));
         sb.AppendLine("exe        : " + Application.ExecutablePath);
         sb.AppendLine("数据目录   : " + DataDir);
         sb.AppendLine("node       : " + (FindNode() ?? "(未找到)"));
@@ -513,6 +560,7 @@ static class Program
         };
         // 把 exe 所在目录告诉后端：配置丢了/换机器时它能从这里往上找到 server/ 与 mindcraft/
         psi.EnvironmentVariables["MCAI_ROOT_HINT"] = AppDomain.CurrentDomain.BaseDirectory.TrimEnd('\\');
+        psi.EnvironmentVariables["MCAI_EXE_DIR"] = AppDomain.CurrentDomain.BaseDirectory.TrimEnd('\\');
         Process p = Process.Start(psi);
         StartedBackend = p;
         // 异步把输出丢掉，避免管道写满把后端卡死
@@ -552,11 +600,15 @@ static class Program
                 if (!ar.AsyncWaitHandle.WaitOne(300)) return false;
                 tcp.EndConnect(ar);
 
+                // 只认自己这一份后端：装了两份（旧的 MC-AI-Control 和新装的 Craftmind）时，
+                // 4599 可能被另一份占着，连上去会显示别人的界面和数据。
                 using (var wc = new WebClient())
                 {
                     wc.Encoding = Encoding.UTF8;
-                    string s = wc.DownloadString("http://127.0.0.1:" + port + "/api/status");
-                    return s.Contains("\"server\"");
+                    string s = wc.DownloadString("http://127.0.0.1:" + port + "/api/hello");
+                    string mine = AppDomain.CurrentDomain.BaseDirectory.TrimEnd('\\');
+                    string needle = "\"exeDir\":\"" + mine.Replace("\\", "\\\\") + "\"";
+                    return s.IndexOf(needle, StringComparison.OrdinalIgnoreCase) >= 0;
                 }
             }
         }
@@ -572,7 +624,7 @@ static class Program
         if (browser == null)
         {
             Log("没找到 Edge/Chrome，用默认浏览器打开");
-            try { Process.Start(url); } catch (Exception ex) { Fatal("Minecraft AI 控制面板", "面板已启动但窗口打不开。\n\n" + ex.Message + "\n\n请手动在浏览器打开：\n" + url); }
+            try { Process.Start(url); } catch (Exception ex) { Fatal("Craftmind", "面板已启动但窗口打不开。\n\n" + ex.Message + "\n\n请手动在浏览器打开：\n" + url); }
             return;
         }
         var psi = new ProcessStartInfo

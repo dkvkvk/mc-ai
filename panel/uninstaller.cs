@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------
-//  Minecraft AI 控制面板 —— 卸载程序
+//  Craftmind —— 卸载程序
 //
 //  单独编译成一个很小的 exe（十几 KB），安装时释放到安装目录里。
 //  为什么不直接复制安装包当卸载器：安装包里内嵌了 node.exe（80+ MB），
@@ -16,9 +16,9 @@ using Microsoft.Win32;
 
 static class UninstallProgram
 {
-    const string AppName = "Minecraft AI 控制面板";
-    const string AppExe = "MC-AI-Control.exe";
-    const string UninstallKey = @"Software\Microsoft\Windows\CurrentVersion\Uninstall\MC-AI-Control";
+    const string AppName = "Craftmind";
+    const string AppExe = "Craftmind.exe";
+    const string UninstallKey = @"Software\Microsoft\Windows\CurrentVersion\Uninstall\Craftmind";
 
     static string StartMenuDir
     {
@@ -43,7 +43,7 @@ static class UninstallProgram
 
     static string DefaultDir
     {
-        get { return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), @"Programs\MC-AI-Control"); }
+        get { return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), @"Programs\Craftmind"); }
     }
 
     [STAThread]
@@ -99,9 +99,9 @@ static class UninstallProgram
         SafeDelete(Path.Combine(DesktopDir, AppName + ".lnk"));
         try { Registry.CurrentUser.DeleteSubKeyTree(UninstallKey, false); } catch { }
 
-        // 数据目录（安装目录\MC-AI-Control-data）整份保留：配置、日志、机器人清单都在里面，
+        // 数据目录（安装目录\Craftmind-data）整份保留：配置、日志、机器人清单都在里面，
         // 用户卸载多半是为了重装或换版本，不该顺手把人家配好的东西删掉。
-        string keep = Path.Combine(dir, "MC-AI-Control-data");
+        string keep = Path.Combine(dir, "Craftmind-data");
         try
         {
             if (Directory.Exists(dir))

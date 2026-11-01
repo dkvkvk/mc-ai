@@ -1,6 +1,6 @@
 # mc-ai
 
-Minecraft AI 一体化仓库：把 mindcraft 机器人、1.20.1 服务端配置和控制面板放在同一个仓库里。
+Craftmind 一体化仓库：把 mindcraft 机器人、1.20.1 服务端配置和控制面板放在同一个仓库里。
 
 ## 目录
 
@@ -25,8 +25,8 @@ Minecraft AI 一体化仓库：把 mindcraft 机器人、1.20.1 服务端配置�
 3. **补服务端 jar**：`server/server.jar`（1.20.1）也不入库。走 BMCLAPI 镜像下，`piston-data.mojang.com` 直连会超时。`server.properties` 里 `online-mode=false` + `enforce-secure-profile=false` 都必需。
 4. **面板（安装包）**：**不本地编译**——改完代码推上来，[build-panel 工作流](.github/workflows/build-panel.yml) 会在 GitHub 的 Windows runner 上用 `csc` 编译，产物在 Actions 页面下载：
 
-   - `MC-AI-Control-Setup.exe` —— 带安装向导（欢迎 → 许可协议 → 安装位置 → 安装 → 完成），装完有开始菜单快捷方式、桌面快捷方式，并在「设置 → 应用」里有一条可卸载项。装到当前用户目录，**不需要管理员权限**。
-   - `MC-AI-Control-portable.zip` —— 解压即用，配置跟着目录走。
+   - `Craftmind-Setup.exe` —— 带安装向导（欢迎 → 许可协议 → 安装位置 → 安装 → 完成），装完有开始菜单快捷方式、桌面快捷方式，并在「设置 → 应用」里有一条可卸载项。装到当前用户目录，**不需要管理员权限**。
+   - `Craftmind-portable.zip` —— 解压即用，配置跟着目录走。
 
    两个产物都自带 `node.exe`，目标机不需要另装 Node。打 `v*` 标签会同时发一个 Release。
    非要本地编：`powershell -ExecutionPolicy Bypass -File panel/build.ps1 -BundleNode`（首次会从 nuget 拉 WebView2 SDK 到 `panel/.cache/`）。
@@ -37,8 +37,8 @@ Minecraft AI 一体化仓库：把 mindcraft 机器人、1.20.1 服务端配置�
 **面板打不开时**：
 
 - 真相先看日志：`launcher.log` 在数据目录里，写不进去会依次落到 exe 同目录、`%TEMP%`。
-- 数据目录就在**安装目录**里：`<exe 所在目录>\MC-AI-Control-data`（配置、日志、机器人清单、WebView2 缓存全在里面）。装到哪个盘就留在哪个盘，不写 C 盘的 AppData / 用户目录。只有在安装目录不可写时（例如装进 Program Files）才退到 `%LOCALAPPDATA%\MC-AI-Control`，再不行退 `%TEMP%`，落在哪会写进 `launcher.log`。
-- `MC-AI-Control.exe --doctor` 生成 `doctor.txt`（node / WebView2 / Edge / 端口 / 目录可写性 / 已安装文件时间戳）并用记事本打开。
+- 数据目录就在**安装目录**里：`<exe 所在目录>\Craftmind-data`（配置、日志、机器人清单、WebView2 缓存全在里面）。装到哪个盘就留在哪个盘，不写 C 盘的 AppData / 用户目录。只有在安装目录不可写时（例如装进 Program Files）才退到 `%LOCALAPPDATA%\Craftmind`，再不行退 `%TEMP%`，落在哪会写进 `launcher.log`。
+- `Craftmind.exe --doctor` 生成 `doctor.txt`（node / WebView2 / Edge / 端口 / 目录可写性 / 已安装文件时间戳）并用记事本打开。
 
 ## 不入库的东西
 

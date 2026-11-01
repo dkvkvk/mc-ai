@@ -1,6 +1,6 @@
 'use strict';
 /**
- * Minecraft AI 控制面板 —— 后端服务
+ * Craftmind —— 后端服务
  * 纯 Node 提供 HTTP API + 静态页面，供 Edge 应用窗口 / 浏览器访问。
  *
  * 多开机器人的原理：MindServer(8080) 支持 socket 事件
@@ -92,7 +92,7 @@ function resolveExecutable(nameOrPath) {
 // 三级策略，越往后越贵，只有前面没找到才走：
 //   1. <exe 目录>（启动器通过 MCAI_ROOT_HINT 传来）、后端目录、cwd 逐级向上 —— 便携/开发场景秒中
 //   2. 用户手工写的 roots.txt（每行一个路径），放在数据目录或 exe 旁边
-//   3. 常见盘符与桌面下扫两层 —— 装到别处（比如 D:\MC-AI-Control）时靠这层兜住
+//   3. 常见盘符与桌面下扫两层 —— 装到别处（比如 D:\Craftmind）时靠这层兜住
 const ROOT_MARKERS = ['server', 'mindcraft'];
 let scanCache = null;
 
@@ -856,6 +856,14 @@ const server = http.createServer(async (req, res) => {
                 changed: Object.keys(patch),
             });
         }
+        // 身份：启动器靠它判断 4599 上跑的到底是不是自己这一份（两个安装目录共用端口段时不能乱连）
+        if (p === '/api/hello') return json(res, 200, {
+            app: 'craftmind',
+            exeDir: (process.env.MCAI_EXE_DIR || '').replace(/[\\/]+$/, ''),
+            dataDir: DATA_DIR,
+            pid: process.pid,
+        });
+
         if (p === '/api/status') return json(res, 200, await getStatus());
 
         // ---- 服务器
@@ -969,7 +977,7 @@ function listen(port, tries = 12) {
     server.listen(port, '127.0.0.1', () => {
         startLogTail();
         if (fs.existsSync(path.join(DATA_DIR, 'mindserver.log'))) startMindTail();   // 面板重开时继续跟
-        pushLog('panel', '控制面板后端已启动，端口 ' + port);
+        pushLog('panel', 'Craftmind 后端已启动，端口 ' + port);
         console.log('MCAI_READY ' + port);
         setInterval(() => {
             if (Date.now() - lastBeat > 60000) {
