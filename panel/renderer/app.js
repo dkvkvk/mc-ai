@@ -10,7 +10,15 @@ async function req(method, url, body) {
         opt.headers['Content-Type'] = 'application/json';
         opt.body = JSON.stringify(body);
     }
-    const r = await fetch(url, opt);
+    let r;
+    try {
+        r = await fetch(url, opt);
+    } catch (e) {
+        // fetch 抛 TypeError 只有一个原因：后端进程没了（或端口被关）。
+        // 直接冒泡就是界面上那句看不懂的 "Failed to fetch"，这里换成人话。
+        throw new Error('后端没响应（Craftmind 的后台进程可能已退出）——关掉窗口重新打开这个程序就行；' +
+                        '要是反复出现，把 Craftmind-data\\backend.log 发我看看');
+    }
     if (!r.ok) throw new Error('HTTP ' + r.status);
     return r.json();
 }

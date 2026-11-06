@@ -563,12 +563,42 @@ static class Program
         psi.EnvironmentVariables["MCAI_EXE_DIR"] = AppDomain.CurrentDomain.BaseDirectory.TrimEnd('\\');
         Process p = Process.Start(psi);
         StartedBackend = p;
-        // 异步把输出丢掉，避免管道写满把后端卡死
-        p.OutputDataReceived += (s, e) => { };
-        p.ErrorDataReceived += (s, e) => { };
+        // 输出必须落到文件：以前是直接丢掉的，后端一旦崩掉（比如 spawn 一个不存在的
+        // node.exe 抛出未捕获的 error 事件）现场什么都不剩，界面上只有一句 Failed to fetch。
+        p.OutputDataReceived += (s, e) => { if (e.Data != null) AppendBackendLog(e.Data); };
+        p.ErrorDataReceived += (s, e) => { if (e.Data != null) AppendBackendLog(e.Data); };
         p.BeginOutputReadLine();
         p.BeginErrorReadLine();
+        p.EnableRaisingEvents = true;
+        p.Exited += (s, e) =>
+        {
+            int code = -1;
+            try { code = p.ExitCode; } catch { }
+            Log("后端进程已退出（exit code " + code + "）");
+            AppendBackendLog("---- 后端进程退出，exit code " + code + " ----");
+        };
         return p;
+    }
+
+    // 后端日志：<数据目录>\backend.log，超过 4 MB 就换一份（只留最近的一份旧的）
+    static readonly object BackendLogLock = new object();
+    static void AppendBackendLog(string line)
+    {
+        try
+        {
+            string f = Path.Combine(DataDir, "backend.log");
+            lock (BackendLogLock)
+            {
+                var fi = new FileInfo(f);
+                if (fi.Exists && fi.Length > 4 * 1024 * 1024)
+                {
+                    string old = f + ".1";
+                    try { if (File.Exists(old)) File.Delete(old); File.Move(f, old); } catch { }
+                }
+                File.AppendAllText(f, DateTime.Now.ToString("HH:mm:ss.fff") + "  " + line + Environment.NewLine, Encoding.UTF8);
+            }
+        }
+        catch { }
     }
 
     static int FindRunningBackend()

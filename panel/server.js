@@ -43,6 +43,15 @@ const CFG_SCHEMA = {
 
 fs.mkdirSync(DATA_DIR, { recursive: true });
 
+// 这是个本地面板的后端：任何没接住的异常/拒绝都不该让整个进程消失（界面会变成一句 Failed to fetch，
+// 而现场什么都不留）。记日志，继续跑。
+process.on('uncaughtException', (e) => {
+    try { pushLog('panel', '后端未捕获异常（已记录并继续运行）：' + ((e && e.stack) || e)); } catch { }
+});
+process.on('unhandledRejection', (e) => {
+    try { pushLog('panel', '后端未处理的 Promise 拒绝（已记录并继续运行）：' + ((e && e.stack) || e)); } catch { }
+});
+
 function loadConfig() {
     try { return { ...DEFAULTS, ...JSON.parse(fs.readFileSync(CONFIG_FILE, 'utf8')) }; }
     catch { return { ...DEFAULTS }; }
@@ -181,6 +190,25 @@ function autodetectPaths(c) {
 }
 
 let cfg = loadConfig();
+
+// 配置里的 node/java 路径是「记下来的绝对路径」，装目录一改（比如 MC-AI-Control → Craftmind）
+// 它就指向一个不存在的文件。spawn 一个不存在的 exe 会抛 ENOENT 的 'error' 事件，
+// 没有监听器 = 整个后端进程直接死掉，界面上只看到一句「Failed to fetch」。所以启动先自愈一次。
+function healExecPaths() {
+    let changed = false;
+    if (!cfg.nodePath || !fs.existsSync(cfg.nodePath)) {
+        const fallback = process.execPath;
+        pushLog('panel', '配置里的 node.exe 不存在（' + (cfg.nodePath || '空') + '），已改用当前正在运行的：' + fallback);
+        cfg.nodePath = fallback;
+        changed = true;
+    }
+    if (cfg.javaPath && /[\\/]/.test(cfg.javaPath) && !fs.existsSync(cfg.javaPath)) {
+        pushLog('panel', '配置里的 java 路径不存在（' + cfg.javaPath + '），已改回走 PATH 的 java');
+        cfg.javaPath = 'java';
+        changed = true;
+    }
+    if (changed) { try { saveConfig(cfg); } catch (e) { pushLog('panel', '配置回写失败：' + e.message); } }
+}
 const cfgExisted = fs.existsSync(CONFIG_FILE);
 if (autodetectPaths(cfg)) {
     saveConfig(cfg);
@@ -646,14 +674,24 @@ async function startBot() {
         pushLog('panel', '启动 MindServer（不自动建 bot）…');
         // 输出写文件而不是管道：这样面板关掉、管道断开也不会把 MindServer 带走
         const mindLog = fs.openSync(path.join(DATA_DIR, 'mindserver.log'), 'a');
-        const p = spawn(cfg.nodePath, ['main.js'], {
-            cwd: cfg.mindcraftDir,
-            windowsHide: true,
-            stdio: ['ignore', mindLog, mindLog],
-            env: { ...process.env, SETTINGS_JSON: JSON.stringify({ profiles: [], auto_open_ui: false }) },
-        });
+        let p;
+        try {
+            p = spawn(cfg.nodePath, ['main.js'], {
+                cwd: cfg.mindcraftDir,
+                windowsHide: true,
+                stdio: ['ignore', mindLog, mindLog],
+                env: { ...process.env, SETTINGS_JSON: JSON.stringify({ profiles: [], auto_open_ui: false }) },
+            });
+        } catch (e) {
+            fs.closeSync(mindLog);
+            return { ok: false, msg: '启动 MindServer 失败：' + e.message + '（node.exe 路径：' + cfg.nodePath + '）' };
+        }
         fs.closeSync(mindLog);
         mindProc = p;
+        p.on('error', (e) => {
+            pushLog('panel', 'MindServer 起不来：' + e.message + '（node.exe：' + cfg.nodePath + '）');
+            mindProc = null;
+        });
         startMindTail();
         p.on('exit', (code) => {
             pushLog('panel', 'MindServer 已退出（code=' + code + '）');
@@ -740,6 +778,10 @@ async function startServer() {
     }
     serverProc = p;
     serverOwned = true;
+    p.on('error', (e) => {
+        pushLog('panel', '服务器起不来：' + e.message + '（java：' + cfg.javaPath + '）');
+        serverProc = null; serverOwned = false;
+    });
     // stdout 是 GBK；正常日志统一走 latest.log（带解码嗅探），这里只捞异常行，避免重复与乱码
     pipeLines(p.stdout, 'server', 'gbk', /Exception|ERROR\]|Failed to|Could not|Address already in use/);
     pipeLines(p.stderr, 'server', 'gbk', null);
@@ -997,6 +1039,7 @@ function listen(port, tries = 12) {
         else { console.error('监听失败:', e.message); process.exit(1); }
     });
     server.listen(port, '127.0.0.1', () => {
+        healExecPaths();   // 路径自愈必须在「能写日志」之后、真正 spawn 之前
         startLogTail();
         if (fs.existsSync(path.join(DATA_DIR, 'mindserver.log'))) startMindTail();   // 面板重开时继续跟
         pushLog('panel', 'Craftmind 后端已启动，端口 ' + port);
