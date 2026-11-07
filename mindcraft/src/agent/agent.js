@@ -191,9 +191,14 @@ export class Agent {
             if (!message || username === this.name) return;
             if (serverProxy.getNumOtherAgents() <= 0) return respondFunc(username, message);
             const lower = String(message).toLowerCase();
-            if (lower.includes(this.name.toLowerCase())) return respondFunc(username, message);
             const names = (serverProxy.getAgents() || []).map((a) => String((a && a.name) || '')).filter(Boolean);
             if (!names.includes(this.name)) names.push(this.name);
+            const selfNamed = lower.includes(this.name.toLowerCase());
+            // 点的是别人就别插嘴（哪怕自己是代表）——否则会出现「Fish2 说话」
+            // 时代表也跟着答一句「Fish2 就在附近」，看着像抢话。
+            const otherNamed = names.some((n) => n !== this.name && lower.includes(n.toLowerCase()));
+            if (selfNamed) return respondFunc(username, message);
+            if (otherNamed) return;
             const leader = names.slice().sort((a, b) => a.localeCompare(b))[0];
             if (leader === this.name) respondFunc(username, message);
         });
