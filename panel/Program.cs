@@ -302,6 +302,10 @@ static class Program
         readonly Process backend;
         WebView2 web;
         bool webReady;
+        bool reallyExit;                 // 只有托盘菜单的「退出」才为 true
+        NotifyIcon tray;
+        System.Windows.Forms.Timer beatTimer;
+        bool trayHintShown;
 
         public AppWindow(int port, Process backend)
         {
@@ -329,6 +333,90 @@ static class Program
 
             Shown += OnShown;
             FormClosing += OnClosing;
+            FormClosed += (s2, e2) => { if (tray != null) { tray.Visible = false; tray.Dispose(); } if (beatTimer != null) beatTimer.Stop(); };
+
+            SetupTray();
+        }
+
+        // -------------------------------------------------------- 托盘（点 X 就收进来，不退出）
+        // 以前点右上角的叉 = 立刻结束进程 → 紧接着 MindServer/机器人全掉线。
+        // 用户反馈过好几次「不小心点了叉」，所以现在 X 只把窗口收进托盘，后台继续跑；
+        // 真要退出走托盘右键菜单「退出」。
+        void SetupTray()
+        {
+            var menu = new ContextMenuStrip();
+            var miShow = new ToolStripMenuItem("显示窗口");
+            miShow.Click += (s2, e2) => RestoreFromTray();
+            var miExit = new ToolStripMenuItem("退出 Craftmind（停掉后台）");
+            miExit.Click += (s2, e2) => ExitForReal();
+            menu.Items.Add(miShow);
+            menu.Items.Add(new ToolStripSeparator());
+            menu.Items.Add(miExit);
+
+            tray = new NotifyIcon();
+            try { tray.Icon = Icon; } catch { }
+            if (tray.Icon == null) { try { tray.Icon = SystemIcons.Application; } catch { } }
+            tray.Text = "Craftmind — 后台运行中（双击回来）";
+            tray.ContextMenuStrip = menu;
+            tray.Visible = true;
+            tray.DoubleClick += (s2, e2) => RestoreFromTray();
+            // 单击也恢复：很多人习惯点一下就开，双击反而不一定点得出来
+            tray.MouseClick += (s2, e2) => { if (e2.Button == MouseButtons.Left) RestoreFromTray(); };
+            tray.BalloonTipClicked += (s2, e2) => RestoreFromTray();
+
+            // 窗口藏起来后 WebView2 的定时器可能被系统节流，前端的心跳一断，
+            // 后端的「60 秒没心跳就自杀」会误判成面板已关闭 → 机器人全掉。
+            // 所以启动器自己每 20 秒补一次心跳，后台挂着就绝不会被误杀。
+            beatTimer = new System.Windows.Forms.Timer();
+            beatTimer.Interval = 20000;
+            beatTimer.Tick += (s2, e2) => Beat();
+            beatTimer.Start();
+        }
+
+        void Beat()
+        {
+            try
+            {
+                using (var wc = new WebClient())
+                {
+                    wc.Headers.Add("User-Agent", "Craftmind");
+                    wc.DownloadString("http://127.0.0.1:" + port + "/api/beat");
+                }
+            }
+            catch { }
+        }
+
+        void HideToTray()
+        {
+            Hide();
+            ShowInTaskbar = false;
+            if (tray != null && !trayHintShown)
+            {
+                trayHintShown = true;
+                try
+                {
+                    tray.BalloonTipTitle = "Craftmind 还在后台跑";
+                    tray.BalloonTipText = "机器人不会掉线。双击托盘图标就能回来；右键托盘菜单里才是真正退出。";
+                    tray.ShowBalloonTip(4000);
+                }
+                catch { }
+            }
+            Log("窗口已收进托盘（后台继续运行，机器人不受影响）");
+        }
+
+        void RestoreFromTray()
+        {
+            ShowInTaskbar = true;
+            Show();
+            if (WindowState == FormWindowState.Minimized) WindowState = FormWindowState.Normal;
+            Activate();
+            Log("窗口已从托盘恢复");
+        }
+
+        void ExitForReal()
+        {
+            reallyExit = true;
+            Close();
         }
 
         async void OnShown(object sender, EventArgs e)
@@ -358,12 +446,26 @@ static class Program
                 // WebView2 运行时缺失 / loader 加载失败：退回 Edge 应用窗口，至少能用
                 Log("WebView2 初始化失败，回退 Edge 窗口: " + ex.Message);
                 OpenPanelWindow(port);
+                reallyExit = true;   // 回退模式下这个窗口本来就要关掉，别被托盘逻辑留住
                 Close();
             }
         }
 
         void OnClosing(object sender, FormClosingEventArgs e)
         {
+            // 点右上角 X / Alt+F4：收进托盘，别退出（退出会把正在跑机器人的后台一起带走）。
+            // 只看 reallyExit，不挑 CloseReason：不同关窗来源给的 Reason 不一定都是 UserClosing
+            // （程序化 WM_CLOSE、任务栏右键关闭都可能给出别的值），挑 Reason 会导致「该挂起的时候退出了」。
+            // 只有系统关机/注销和任务管理器强关才放行——那时候留着窗口反而是障碍。
+            Log("收到关闭请求（CloseReason=" + e.CloseReason + "，reallyExit=" + reallyExit + "）");
+            // 连 TaskManagerClosing 也挂起：外部程序/任务管理器「结束任务」发的就是这种裸 WM_CLOSE，
+            // 而它跟误点叉子长得一模一样。真要强制杀掉，任务管理器还有「结束进程」，那条路挡不住。
+            if (!reallyExit && e.CloseReason != CloseReason.WindowsShutDown)
+            {
+                e.Cancel = true;
+                HideToTray();
+                return;
+            }
             SaveBoundsToDisk();
             try
             {
