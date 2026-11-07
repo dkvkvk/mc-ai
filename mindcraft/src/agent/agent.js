@@ -182,9 +182,20 @@ export class Agent {
         this.bot.on('whisper', respondFunc);
         
         this.bot.on('chat', (username, message) => {
-            if (serverProxy.getNumOtherAgents() > 0) return;
-            // only respond to open chat messages when there are no other agents
-            respondFunc(username, message);
+            // 原版逻辑：只要服务器里还有别的 bot，就完全不看公屏（防四个 bot 一起抢答）。
+            // 但那样一来玩家在公屏喊话就永远没人理 —— 只能私聊或从面板点名下发。
+            // 现在改成分情况：
+            //   只有自己       → 照旧全部回应
+            //   公屏点名自己   → 自己回应
+            //   公屏没点名     → 只让「代表」回应（名字字典序最小的那个 bot），其余闭嘴
+            if (!message || username === this.name) return;
+            if (serverProxy.getNumOtherAgents() <= 0) return respondFunc(username, message);
+            const lower = String(message).toLowerCase();
+            if (lower.includes(this.name.toLowerCase())) return respondFunc(username, message);
+            const names = (serverProxy.getAgents() || []).map((a) => String((a && a.name) || '')).filter(Boolean);
+            if (!names.includes(this.name)) names.push(this.name);
+            const leader = names.slice().sort((a, b) => a.localeCompare(b))[0];
+            if (leader === this.name) respondFunc(username, message);
         });
 
         // Set up auto-eat
