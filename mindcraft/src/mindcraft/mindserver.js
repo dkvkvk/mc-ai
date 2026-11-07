@@ -5,6 +5,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import * as mindcraft from './mindcraft.js';
 import { readFileSync } from 'fs';
+import globalSettings from '../../settings.js';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 // Mindserver is:
@@ -70,7 +71,11 @@ export function createMindServer(host_public = false, port = 8080) {
                         return;
                     }
                     else {
-                        settings[key] = settings_spec[key].default;
+                        // 别一律用 settings_spec 的默认值：那等于把 settings.js 里的配置
+                        // 整份丢掉（allow_insecure_coding 的 spec 默认是 false，
+                        // 于是「settings.js 改成 true」对面板创建的 bot 从来没生效过）。
+                        // 正确的优先级：settings.js 里的实际值 > spec 默认值。
+                        settings[key] = (key in globalSettings) ? globalSettings[key] : settings_spec[key].default;
                     }
                 }
             }

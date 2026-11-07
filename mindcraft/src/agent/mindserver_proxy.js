@@ -1,6 +1,7 @@
 import { io } from 'socket.io-client';
 import convoManager from './conversation.js';
 import { setSettings } from './settings.js';
+import baseSettings from '../../settings.js';
 import { getFullState } from './library/full_state.js';
 
 // agent's individual connection to the mindserver
@@ -90,7 +91,11 @@ class MindServerProxy {
                 if (response.error) {
                     return reject(new Error(response.error));
                 }
-                setSettings(response.settings);
+                // 不能整份替换：下发方（比如 Craftmind 面板）只会带它关心的那几个字段，
+                // 整份替换等于把 settings.js 里的全局配置全抹掉（allow_insecure_coding、
+                // narrate_behavior、max_messages…都变 undefined），newAction 就被误判成禁用。
+                // 正确的语义是「全局默认 + 下发方覆盖」。
+                setSettings({ ...baseSettings, ...response.settings });
                 this.socket.emit('connect-agent-process', name);
                 resolve();
             });
