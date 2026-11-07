@@ -833,20 +833,27 @@ async function getStatus() {
             port: cfg.mindserverPort,
             agents: agentsCache,
         },
-        bots: bots.map((b) => ({
+        bots: bots.map((b) => {
+            // hasKey 必须是「这把机器人现在到底有没有 key」：面板里填的、mindcraft/keys.json 里的、
+            // 环境变量里的都算。以前只看 b.apiKey（面板字段），所以 key 明明在 keys.json 里，
+            // 界面还一直报「还没填 API Key」，点启动又能起来 —— 自相矛盾。
+            const k = botKeyState(b);
+            return {
             name: b.name,
             model: b.model,
             api: b.api,
             url: b.url,
             language: BOT_LANGUAGE,
-            hasKey: !!b.apiKey,                    // 只告诉界面「填过没」，不回传明文
-            keyHint: b.apiKey ? '****' + b.apiKey.slice(-4) : '',
+            hasKey: k.ok,                          // 只告诉界面「有没有」，不回传明文
+            keyFrom: k.from,                       // panel / keys.json / env
+            keyHint: b.apiKey ? '****' + b.apiKey.slice(-4) : (k.from === 'keys.json' ? '(mindcraft/keys.json)' : (k.from === 'env' ? '(环境变量)' : '')),
             keyName: keyNameOf(b.api),
             initMessage: b.initMessage || '',
             enabled: b.enabled !== false,
             state: botStateOf(b.name),
             inGame: !!agentsCache.find((a) => a.name === b.name && a.in_game),
-        })),
+            };
+        }),
         players: [...players.keys()],
         paths: {
             serverDir: cfg.serverDir,
